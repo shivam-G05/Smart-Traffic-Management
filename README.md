@@ -13,8 +13,8 @@ milestone is fully working and demoable on its own before the next begins.
 | # | Milestone | Status |
 |---|-----------|--------|
 | 1 | Foundation — simulation engine, real-time pipeline, fixed-timer baseline | ✅ Done |
-| 2 | Virtual camera frames + OpenCV Haar Cascade vehicle detection | Next |
-| 3 | Multi-object tracking (ByteTrack), persistent vehicle IDs | Planned |
+| 2 | Virtual camera frames + OpenCV Haar Cascade vehicle detection | ✅ Done |
+| 3 | Multi-object tracking (ByteTrack), persistent vehicle IDs | Next |
 | 4 | Weighted traffic density estimation per lane | Planned |
 | 5 | Adaptive/AI signal controller (replaces fixed-timer) | Planned |
 | 6 | Emergency vehicle detection + signal preemption | Planned |
@@ -135,6 +135,116 @@ The dashboard's WebSocket URL defaults to `127.0.0.1` rather than
 (`::1`) while uvicorn only binds the IPv4 loopback by default — the
 WebSocket handshake then dies silently with no server-side error. Override
 via `VITE_WS_URL` in `frontend/.env` if you bind uvicorn elsewhere.
+
+---
+
+## Milestone 2 — Virtual camera + Haar Cascade detection
+
+### Objective
+
+Give each road a "camera": render its approach to the stop line as an
+actual image frame (not simulation JSON), run OpenCV's Haar Cascade
+classifier on it to localize vehicles, and surface bounding boxes +
+confidence on the dashboard — exactly the abstract's stated pipeline
+(`Capture → Detect & Count`), still with zero hardware.
+
+### Architectural decisions
+
+- **The camera's contract is a road-state dict → an image.** `vision/camera.py`
+  takes the same per-road dict the simulation already emits and renders a
+  synthetic BGR frame. `vision/detector.py` takes a frame → detections and
+  knows nothing about the simulation at all. Swapping in a real CCTV feed
+  later means replacing `render_road_frame()`'s output with a real frame
+  grab — the detector, pipeline, and dashboard are unaffected.
+- **Honesty layer, not a cheat.** A single generic Haar cascade (`cars.xml`)
+  is a *binary* vehicle/non-vehicle detector — it does not classify vehicle
+  type, and its confidence is a cascade decision margin, not a calibrated
+  probability. `vision/pipeline.py` matches each raw detection back to the
+  nearest ground-truth simulated vehicle *only* to label it with a type for
+  display and to compute real precision/recall — those numbers are never
+  fed back into what the detector actually returned, and they're shown
+  as-is on the dashboard (often well under 50% recall) rather than
+  papered over. This is a genuine, documented limitation of classical Haar
+  cascades applied to synthetic top-down imagery, not a simulation-specific
+  bug — see the code comments in `vision/detector.py` for the full
+  reasoning, and it's exactly the kind of finding worth calling out in a
+  project defense rather than hiding.
+- **Separate WebSocket channel (`/ws/vision`) at a separate (lower) rate.**
+  Camera frames are JPEG payloads, much heavier than the `/ws/simulation`
+  JSON state, and rendering + Haar detection is CPU-bound. Broadcasting
+  vision at 2Hz on its own channel — computed on a dedicated worker thread
+  via `loop.run_in_executor` — keeps it from ever stalling the 20Hz
+  simulation tick loop.
+- **Bounding boxes are burned into the JPEG server-side**, not sent as
+  separate coordinates for the frontend to overlay. Simpler, and avoids a
+  class of coordinate-scaling bugs between the render resolution and
+  whatever size the `<img>` ends up displayed at.
+
+### Folder structure (additions)
+
+```
+vision/
+  config.py       Camera + cascade tuning constants
+  camera.py       render_road_frame(), ground_truth_boxes(), encode_jpeg()
+  detector.py     HaarVehicleDetector — loads cars.xml, detectMultiScale3
+  pipeline.py     analyze_road() — render + detect + ground-truth matching
+                  + annotated-frame drawing, all tied together
+  models/
+    cars.xml      Public-domain Haar cascade (andrewssobral/vehicle_detection_haarcascades)
+
+backend/app/
+  vision_runner.py   Background loop: render+detect per road at 2Hz,
+                      off the event loop via a worker thread
+
+frontend/src/
+  hooks/useVisionSocket.js       WebSocket client for /ws/vision
+  components/CameraFeedGrid.jsx  2x2 live camera panel grid
+```
+
+### Technologies used (Milestone 2 additions)
+
+- **opencv-python-headless** — frame synthesis (`cv2.rectangle`/`putText`)
+  and `cv2.CascadeClassifier` for detection
+- **numpy** — frame buffers
+
+### APIs (additions)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/vision/latest` | Latest per-road detection snapshot |
+| WS | `/ws/vision` | Live camera frames + detections, 2Hz |
+
+### Database changes
+
+None — same reasoning as Milestone 1.
+
+### UI screens (additions)
+
+"Live CCTV Feeds" panel below the intersection canvas: a 2x2 grid, one
+tile per road, each showing the live annotated JPEG (green box = detection
+matched to a real vehicle, orange = unmatched/false positive, thin gray
+outline = ground truth) plus a `detected/ground-truth` count and
+`precision`/`recall` readout.
+
+### Testing strategy (additions)
+
+```bash
+cd backend
+python -m pytest -q
+```
+
+- `tests/test_vision.py` — frame shape/dtype, seeded-render determinism,
+  ground-truth boxes correctly exclude out-of-view vehicles, detector loads
+  the cascade and returns well-formed `Detection`s, `analyze_road()` output
+  shape and valid JPEG bytes, empty-road edge case.
+- `tests/test_api.py` — `/ws/vision` delivers a snapshot for all 4 roads,
+  `/api/vision/latest` reflects it after connecting.
+
+All 19 tests pass (9 from Milestone 1 + 10 new). Frontend verified visually
+with a live backend + Playwright screenshot: all 4 camera tiles render live
+JPEG frames with detection overlays, confidence labels, and non-trivial
+(non-placeholder) precision/recall numbers pulled from the real detector
+output.
 
 ---
 
