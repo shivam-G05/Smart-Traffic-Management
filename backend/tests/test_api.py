@@ -26,3 +26,22 @@ def test_intersection_state_endpoint_after_connection():
         response = client.get("/api/intersection/state")
     assert response.status_code == 200
     assert "roads" in response.json()
+
+
+def test_websocket_receives_vision_snapshot():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/vision") as websocket:
+            message = websocket.receive_json()
+    assert set(message["roads"].keys()) == {"north", "south", "east", "west"}
+    for road in message["roads"].values():
+        assert "frame_jpeg_base64" in road
+        assert "detections" in road
+
+
+def test_vision_latest_endpoint_after_connection():
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/vision") as websocket:
+            websocket.receive_json()
+        response = client.get("/api/vision/latest")
+    assert response.status_code == 200
+    assert "roads" in response.json()

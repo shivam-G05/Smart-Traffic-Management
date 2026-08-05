@@ -42,3 +42,28 @@ class IntersectionSnapshot(BaseModel):
     controller: str
     total_active_vehicles: int
     roads: dict[str, RoadState]
+
+
+class VehicleDetection(BaseModel):
+    x: int
+    y: int
+    w: int
+    h: int
+    confidence: float
+    matched: bool
+    matched_type: str | None
+
+
+class RoadVisionFrame(BaseModel):
+    road: str
+    frame_jpeg_base64: str
+    detections: list[VehicleDetection]
+    ground_truth_count: int
+    detected_count: int
+    precision: float | None
+    recall: float | None
+
+
+class VisionSnapshot(BaseModel):
+    sim_time: float
+    roads: dict[str, RoadVisionFrame]

@@ -14,6 +14,12 @@ async def intersection_state(request: Request):
     return runner.latest_state
 
 
+@router.get("/vision/latest")
+async def vision_latest(request: Request):
+    runner = request.app.state.vision_runner
+    return runner.latest_snapshot
+
+
 @router.get("/signals/status")
 async def signals_status(request: Request):
     runner = request.app.state.simulation_runner
