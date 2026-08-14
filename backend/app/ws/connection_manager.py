@@ -15,8 +15,12 @@ class ConnectionManager:
         self._connections.discard(websocket)
 
     async def broadcast_json(self, payload: dict) -> None:
+        # Iterate a snapshot, not the live set: send_json awaits, which yields
+        # to the event loop, and a client connecting/disconnecting mid-await
+        # mutates self._connections — iterating it directly raises
+        # "RuntimeError: Set changed size during iteration".
         stale: list[WebSocket] = []
-        for connection in self._connections:
+        for connection in list(self._connections):
             try:
                 await connection.send_json(payload)
             except Exception:

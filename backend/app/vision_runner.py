@@ -51,8 +51,8 @@ class VisionRunner:
     async def _run(self) -> None:
         interval = 1.0 / VISION_BROADCAST_HZ
         loop = asyncio.get_event_loop()
-        try:
-            while True:
+        while True:
+            try:
                 state = self.simulation_runner.latest_state
                 if state and state.get("roads"):
                     self._frame_counter += 1
@@ -62,11 +62,13 @@ class VisionRunner:
                     self._latest_snapshot = snapshot
                     await self.manager.broadcast_json(snapshot)
                 await asyncio.sleep(interval)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Vision loop crashed")
-            raise
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Keep the vision loop alive across transient errors, same as
+                # the simulation loop — one bad frame must not stop the feed.
+                logger.exception("Vision frame failed; continuing")
+                await asyncio.sleep(interval)
 
     def _analyze_all_roads(self, state: dict) -> dict:
         roads = {}

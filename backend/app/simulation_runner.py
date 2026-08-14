@@ -43,16 +43,18 @@ class SimulationRunner:
         tick_dt = 1.0 / settings.tick_hz
         broadcast_every_n_ticks = max(1, settings.tick_hz // settings.broadcast_hz)
         tick_count = 0
-        try:
-            while True:
+        while True:
+            try:
                 self.engine.tick(tick_dt)
                 tick_count += 1
                 if tick_count % broadcast_every_n_ticks == 0:
                     self._latest_state = self.engine.to_state()
                     await self.manager.broadcast_json(self._latest_state)
                 await asyncio.sleep(tick_dt)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Simulation loop crashed")
-            raise
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A transient error (e.g. a flaky client send) must never
+                # permanently freeze the simulation — log and keep ticking.
+                logger.exception("Simulation tick failed; continuing")
+                await asyncio.sleep(tick_dt)
