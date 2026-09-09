@@ -41,3 +41,14 @@ DETECT_MIN_SIZE_PX = (20, 20)
 MATCH_PADDING_PX = 4
 
 VISION_BROADCAST_HZ = 2
+
+# --- Multi-object tracking (ByteTrack-style, see vision/tracker.py) ---
+# Real ByteTrack tunes these against a detector whose confidence is roughly
+# calibrated to [0, 1] with most real detections well above 0.5. Our Haar
+# Cascade's confidence (a raw cascade-stage decision margin, see
+# detector.py) sits mostly in 0.0-0.5, so these thresholds are shifted down
+# accordingly rather than reused from the reference values.
+TRACK_HIGH_CONF_THRESHOLD = 0.15  # detections at/above this: stage-1 match
+TRACK_MATCH_IOU_THRESHOLD = 0.15  # minimum IoU (post Kalman-predict) to accept a match
+TRACK_MAX_AGE = 3                 # frames a track may go unmatched before deletion
+TRACK_MIN_HITS = 2                # consecutive matches required before a track is "confirmed"
