@@ -14,8 +14,8 @@ milestone is fully working and demoable on its own before the next begins.
 |---|-----------|--------|
 | 1 | Foundation — simulation engine, real-time pipeline, fixed-timer baseline | ✅ Done |
 | 2 | Virtual camera frames + OpenCV Haar Cascade vehicle detection | ✅ Done |
-| 3 | Multi-object tracking (ByteTrack), persistent vehicle IDs | Next |
-| 4 | Weighted traffic density estimation per lane | Planned |
+| 3 | Multi-object tracking (ByteTrack), persistent vehicle IDs | ✅ Done |
+| 4 | Weighted traffic density estimation per lane | Next |
 | 5 | Adaptive/AI signal controller (replaces fixed-timer) | Planned |
 | 6 | Emergency vehicle detection + signal preemption | Planned |
 | 7 | Analytics dashboard — historical graphs, congestion levels, reports | Planned |
@@ -246,6 +246,152 @@ JPEG frames with detection overlays, confidence labels, and non-trivial
 (non-placeholder) precision/recall numbers pulled from the real detector
 output.
 
+### Post-Milestone-2 fix: WebSocket broadcast concurrency bug
+
+`ConnectionManager.broadcast_json` iterated the live set of connected
+clients while `await`-ing each send. A client connecting or disconnecting
+mid-broadcast mutated that set during iteration, raising `RuntimeError: Set
+changed size during iteration` — which the simulation/vision loops caught
+and **re-raised**, permanently killing the background task. The dashboard
+would freeze (the server stayed responsive, so `/api/health` still
+returned 200 — only the simulation clock stopped advancing) until a manual
+restart. Fixed by iterating a snapshot copy of the connection set, and by
+making both loops log-and-continue on a transient error instead of dying.
+Verified by hammering the server with 120 rapid connect/disconnect cycles
+and confirming `sim_time` kept advancing throughout. See
+`backend/tests/test_connection_manager.py`.
+
+---
+
+## Milestone 3 — Multi-object tracking (ByteTrack)
+
+### Objective
+
+Milestone 2's detector re-detects vehicles from scratch every broadcast
+tick with no memory of previous frames — every detection is anonymous.
+Milestone 3 gives every vehicle a **persistent ID** across frames, so the
+dashboard can show stable identities and a genuine cumulative "vehicles
+counted" figure instead of re-summing per-frame noise (the roadmap's
+"prevent duplicate counting" requirement).
+
+### Architectural decisions
+
+- **Implemented from scratch, not pulled in as a dependency**, consistent
+  with how the detector itself was built. `vision/tracker.py` implements
+  ByteTrack's core idea: a constant-velocity **Kalman filter** predicts
+  where each track should be before matching, and association happens in
+  **two stages** — high-confidence detections against all tracks first,
+  then low-confidence detections against whatever tracks are still
+  unmatched (ByteTrack's key insight: a weak detection is still evidence a
+  known vehicle is there, so don't discard it outright — but a weak
+  detection is never allowed to *spawn* a brand-new track, only sustain an
+  existing one). Matching uses IoU cost with the Hungarian algorithm
+  (`scipy.optimize.linear_sum_assignment`).
+- **Thresholds adapted from the reference values, not reused blindly.**
+  Real ByteTrack tunes its high/low confidence split against a detector
+  whose output is roughly calibrated to [0, 1] with real detections well
+  above 0.5. Our Haar Cascade's confidence (a raw cascade-stage decision
+  margin, not a probability — see Milestone 2) sits mostly in 0.0–0.5, so
+  `TRACK_HIGH_CONF_THRESHOLD` in `vision/config.py` is set to 0.15, not
+  ByteTrack's typical ~0.6.
+- **The tracker only tracks geometry — it has no concept of "real" vs
+  "false positive."** It never touches ground truth. `vision/pipeline.py`
+  looks up each visible track's `track_id` by exact bbox match (a track's
+  `bbox` is always set to exactly the `(x, y, w, h)` of whatever detection
+  matched it) and attaches it to that detection, entirely independent of
+  the ground-truth type-matching already happening there.
+- **A real bug, found and fixed while building this milestone:**
+  `vision/camera.py`'s background noise (added in M2 for visual "sensor
+  flicker") was reseeded with a *different* random pattern every
+  broadcast tick. That's harmless for M2 (a fresh per-tick image is all a
+  stateless detector needs), but it meant the whole frame — including the
+  texture immediately around real vehicles — was completely uncorrelated
+  frame to frame. Verified directly: with a fixed seed, detections landed
+  at the exact same pixel position every tick; with a per-tick-varying
+  seed, even a *stationary* vehicle's detection box jumped to an
+  unrelated position every time. No detection could ever survive two
+  consecutive ticks, so no track could ever be confirmed — `active_tracks`
+  measured 0 for 20+ seconds of live traffic while `unique_vehicles_tracked`
+  climbed steadily in the background. Fixed in `vision_runner.py`: the
+  per-road seed is now stable over time (varies by road name only, not by
+  tick), matching how a real camera's background actually behaves — only
+  genuinely moving objects should change position between frames.
+- **Honest finding, not tuned away:** even after that fix, most confirmed
+  tracks in a live run are of *static background* false positives rather
+  than real vehicles — because a static false positive is, by definition,
+  perfectly stable frame to frame (trivial for the tracker to confirm),
+  while a real, moving vehicle must be genuinely re-detected by the
+  already-weak Haar Cascade on two consecutive ticks to earn a confirmed
+  ID, compounding Milestone 2's low per-frame recall. Real vehicles do get
+  confirmed — verified directly over a 36-second live window (2 genuine
+  vehicle tracks confirmed, `matched: true`) — just less often than
+  background artifacts. `TRACK_MIN_HITS` was deliberately left at 2 rather
+  than weakened to 1 to manufacture a better-looking demo; that would
+  remove the one mechanism that filters single-frame noise out of the
+  displayed track list at all. This is the same honesty policy as
+  Milestone 2's precision/recall numbers: report what the pipeline
+  actually does, not what would look best.
+
+### Folder structure (additions)
+
+```
+vision/
+  tracker.py    KalmanBoxTracker, Track, ByteTracker
+
+backend/app/
+  vision_runner.py   now owns one persistent ByteTracker per road and
+                      computes real wall-clock dt between ticks
+```
+
+### Technologies used (Milestone 3 additions)
+
+- **scipy** — `linear_sum_assignment` (Hungarian algorithm) for detection-to-track matching
+
+### APIs (additions)
+
+No new endpoints — `RoadVisionFrame` (served by the existing
+`/ws/vision` and `/api/vision/latest`) gains fields:
+
+| Field | Meaning |
+|---|---|
+| `detections[].track_id` | Persistent id, `null` until a track is confirmed |
+| `active_tracks` | Confirmed tracks visible this tick |
+| `unique_vehicles_tracked` | Cumulative distinct tracks since the server started |
+
+### Database changes
+
+None — same reasoning as Milestones 1–2.
+
+### UI screens (additions)
+
+Camera tiles now draw a cyan `#<id>` label under any detection with a
+confirmed track, and each tile's footer gains an `active tracks` /
+`total counted` row.
+
+### Testing strategy (additions)
+
+```bash
+cd backend
+python -m pytest -q
+```
+
+- `tests/test_tracker.py` — ID persistence across frames, distinct IDs for
+  separate vehicles, track removal after `max_age`, a reappearing vehicle
+  gets a *new* id rather than reusing an old one, low-confidence detections
+  can sustain but never spawn a track, cumulative count reflects unique
+  vehicles not frames, and a direct Kalman-filter convergence check.
+- `tests/test_vision.py` — updated for the new `analyze_road()` signature;
+  asserts every detection carries a `track_id` field and the new count
+  fields are present and sane.
+
+All 29 tests pass (19 from Milestones 1–2 + 10 new). Diagnosed and fixed
+the background-reseeding bug above using isolated scripts before touching
+the test suite, then verified live: `active_tracks` went from measuring 0
+for 20+ seconds straight (pre-fix) to correctly confirming and holding
+stable track IDs across ticks (post-fix), confirmed visually in-browser via
+Playwright screenshot — cyan `#id` labels and live active/total counts on
+every camera tile.
+
 ---
 
 ## Running it
@@ -274,24 +420,17 @@ npm run dev
 
 Dashboard is live at `http://localhost:5173`.
 
-### Testing strategy
+### Running the tests
 
 ```bash
 cd backend
 python -m pytest -q
 ```
 
-- `tests/test_simulation.py` — pure simulation engine: vehicles spawn and
-  move, stop at red, never grant conflicting NS/EW greens, every road
-  eventually gets green (no starvation even in the fixed-timer baseline).
-- `tests/test_api.py` — FastAPI `TestClient`: health check, WebSocket
-  delivers a valid snapshot, REST state endpoint reflects it.
-
-All 9 tests pass. Frontend was verified visually with a live backend +
-Playwright screenshot: canvas renders lane markings, stop lines, per-road
-traffic light boxes, vehicles colored/sized by type, and the status panel
-correctly reflects live queue lengths, vehicle counts, and emergency-vehicle
-flags from the WebSocket stream.
+29 tests across `tests/test_simulation.py`, `tests/test_api.py`,
+`tests/test_connection_manager.py`, `tests/test_vision.py`, and
+`tests/test_tracker.py` — see each milestone section above for what's
+covered where.
 
 ---
 
