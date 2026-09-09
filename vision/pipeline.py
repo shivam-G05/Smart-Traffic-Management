@@ -1,6 +1,7 @@
-"""Wires camera + detector together for one road and adds the honesty
-layer: matching each raw detection back to ground truth (for type labels
-and precision/recall), and drawing the annotated frame for the dashboard.
+"""Wires camera + detector + tracker together for one road and adds the
+honesty layer: matching each raw detection back to ground truth (for type
+labels and precision/recall), and drawing the annotated frame for the
+dashboard.
 """
 
 import base64
@@ -10,10 +11,12 @@ import cv2
 from vision.camera import encode_jpeg, ground_truth_boxes, render_road_frame
 from vision.config import MATCH_PADDING_PX
 from vision.detector import Detection, HaarVehicleDetector
+from vision.tracker import ByteTracker
 
 _DETECTION_BOX_COLOR = (0, 210, 0)
 _FALSE_POSITIVE_COLOR = (0, 140, 255)
 _GROUND_TRUTH_COLOR = (90, 90, 90)
+_TRACK_ID_COLOR = (255, 255, 0)
 
 
 def _contains_center(gt: dict, cx: float, cy: float) -> bool:
@@ -47,11 +50,27 @@ def _match_detections(detections: list[Detection], gt_boxes: list[dict]) -> tupl
     return results, matched_gt_ids
 
 
-def analyze_road(road_name: str, road_state: dict, detector: HaarVehicleDetector, seed=None) -> dict:
+def analyze_road(
+    road_name: str,
+    road_state: dict,
+    detector: HaarVehicleDetector,
+    tracker: ByteTracker,
+    dt: float,
+    seed=None,
+) -> dict:
     frame = render_road_frame(road_state, seed=seed)
     gt_boxes = ground_truth_boxes(road_state)
     raw_detections = detector.detect(frame)
     labeled_detections, matched_gt_ids = _match_detections(raw_detections, gt_boxes)
+
+    visible_tracks = tracker.update(raw_detections, dt=dt)
+    # Every visible track's bbox is exactly the (x, y, w, h) of whichever
+    # detection matched it this tick (see ByteTracker._apply_match), so a
+    # plain box lookup is enough to attach a track_id to that detection —
+    # no separate spatial matching needed.
+    track_id_by_box = {t.bbox: t.id for t in visible_tracks}
+    for det in labeled_detections:
+        det["track_id"] = track_id_by_box.get((det["x"], det["y"], det["w"], det["h"]))
 
     annotated = frame.copy()
     for gt in gt_boxes:
@@ -68,6 +87,11 @@ def analyze_road(road_name: str, road_state: dict, detector: HaarVehicleDetector
             annotated, label, (x, max(0, y - 3)),
             cv2.FONT_HERSHEY_SIMPLEX, 0.32, color, 1, cv2.LINE_AA,
         )
+        if det["track_id"] is not None:
+            cv2.putText(
+                annotated, f"#{det['track_id']}", (x, y + h + 10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.32, _TRACK_ID_COLOR, 1, cv2.LINE_AA,
+            )
 
     ground_truth_count = len(gt_boxes)
     detected_count = len(labeled_detections)
@@ -86,4 +110,6 @@ def analyze_road(road_name: str, road_state: dict, detector: HaarVehicleDetector
         "detected_count": detected_count,
         "precision": round(precision, 2) if precision is not None else None,
         "recall": round(recall, 2) if recall is not None else None,
+        "active_tracks": len(visible_tracks),
+        "unique_vehicles_tracked": tracker.total_tracks_created,
     }

@@ -52,6 +52,7 @@ class VehicleDetection(BaseModel):
     confidence: float
     matched: bool
     matched_type: str | None
+    track_id: int | None
 
 
 class RoadVisionFrame(BaseModel):
@@ -62,6 +63,8 @@ class RoadVisionFrame(BaseModel):
     detected_count: int
     precision: float | None
     recall: float | None
+    active_tracks: int
+    unique_vehicles_tracked: int
 
 
 class VisionSnapshot(BaseModel):
