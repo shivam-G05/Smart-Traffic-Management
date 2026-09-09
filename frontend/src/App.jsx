@@ -14,7 +14,7 @@ export default function App() {
       <header className="mb-6">
         <h1 className="text-xl font-bold">AI Smart Traffic Management</h1>
         <p className="text-sm text-white/50">
-          Milestone 2 — virtual camera feeds + OpenCV Haar Cascade vehicle detection
+          Milestone 3 — multi-object tracking (ByteTrack) on top of Haar Cascade detection
         </p>
       </header>
 
