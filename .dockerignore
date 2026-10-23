@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+.run-logs
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+frontend/node_modules
+frontend/dist
+hardware
+*.db
+*.db-journal
+*.md
+!README.md

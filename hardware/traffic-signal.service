@@ -1,0 +1,22 @@
+# Auto-start the signal driver on a Raspberry Pi.
+#   sudo cp hardware/traffic-signal.service /etc/systemd/system/
+#   sudo systemctl enable --now traffic-signal
+# Edit User, WorkingDirectory and the --url below to match your setup.
+[Unit]
+Description=Smart Traffic signal GPIO driver
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Smart-Traffic-Management
+ExecStart=/usr/bin/python3 hardware/gpio_driver.py --url http://192.168.1.5:8000
+Restart=always
+RestartSec=3
+# Keep the journal readable: the driver only prints on state changes.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

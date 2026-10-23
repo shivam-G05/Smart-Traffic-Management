@@ -9,6 +9,7 @@ from pydantic import BaseModel
 class VehicleState(BaseModel):
     id: int
     type: str
+    length: float
     lane: int
     position: float
     speed: float
@@ -19,6 +20,7 @@ class LaneState(BaseModel):
     lane_index: int
     queue_length: int
     vehicle_count: int
+    density_score: float
     vehicles: list[VehicleState]
 
 
@@ -27,12 +29,27 @@ class TrafficLightState(BaseModel):
     time_in_state: float
 
 
+class DensityContribution(BaseModel):
+    type: str
+    state: str  # "queued" | "moving"
+    count: int
+    weight: float
+    multiplier: float
+    contribution: float
+
+
 class RoadState(BaseModel):
     name: str
     light: TrafficLightState
     queue_length: int
     vehicle_count: int
+    density_score: float
+    congestion_level: str  # "low" | "medium" | "high"
+    high_traffic_alert: bool  # congestion "high", held on briefly to avoid flicker
+    density_breakdown: list[DensityContribution]
     has_emergency_vehicle: bool
+    total_exited: int
+    total_wait_time_s: float
     lanes: list[LaneState]
 
 
@@ -53,6 +70,7 @@ class VehicleDetection(BaseModel):
     matched: bool
     matched_type: str | None
     track_id: int | None
+    is_emergency: bool
 
 
 class RoadVisionFrame(BaseModel):
@@ -65,6 +83,7 @@ class RoadVisionFrame(BaseModel):
     recall: float | None
     active_tracks: int
     unique_vehicles_tracked: int
+    vision_emergency_detected: bool
 
 
 class VisionSnapshot(BaseModel):

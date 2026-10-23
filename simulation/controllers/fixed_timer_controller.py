@@ -77,3 +77,12 @@ class FixedTimerController(SignalControllerBase):
 
     def current_phase_name(self) -> str:
         return self.phase.name
+
+    def resync(self, intersection: Intersection) -> None:
+        self._apply_lights(intersection)
+
+    def resume_from_all_red(self, intersection: Intersection, served_roads) -> None:
+        self.phase = Phase.EW_GREEN if set(served_roads) & set(NS_GROUP) else Phase.NS_GREEN
+        self._elapsed_in_phase = 0.0
+        self._apply_phase_lights_pending = False
+        self._apply_lights(intersection)

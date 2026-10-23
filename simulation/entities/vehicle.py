@@ -14,6 +14,7 @@ class Vehicle:
     speed_mps: float = 0.0
     id: int = field(default_factory=lambda: next(_id_counter))
     exited: bool = False
+    queued_time_s: float = 0.0
 
     @property
     def profile(self):
@@ -27,6 +28,7 @@ class Vehicle:
         return {
             "id": self.id,
             "type": self.vehicle_type.value,
+            "length": self.profile.length_m,
             "lane": self.lane_index,
             "position": round(self.position_m, 2),
             "speed": round(self.speed_mps, 2),

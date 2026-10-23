@@ -18,6 +18,13 @@ _FALSE_POSITIVE_COLOR = (0, 140, 255)
 _GROUND_TRUTH_COLOR = (90, 90, 90)
 _TRACK_ID_COLOR = (255, 255, 0)
 
+# Vision-side "would the camera have caught this?" flag — display only.
+# Signal control decisions (Milestone 6) use Road.has_emergency_vehicle()
+# (simulation ground truth) exclusively, never this: the Haar cascade's
+# documented poor recall (see vision/detector.py, README Milestone 2/3)
+# means control logic must not depend on it.
+_EMERGENCY_TYPES = {"ambulance", "fire_truck"}
+
 
 def _contains_center(gt: dict, cx: float, cy: float) -> bool:
     x0, y0 = gt["x"] - MATCH_PADDING_PX, gt["y"] - MATCH_PADDING_PX
@@ -40,11 +47,13 @@ def _match_detections(detections: list[Detection], gt_boxes: list[dict]) -> tupl
         if best_gt is not None:
             matched_gt_ids.add(best_gt["id"])
 
+        matched_type = best_gt["type"] if best_gt is not None else None
         results.append(
             {
                 **det.to_dict(),
                 "matched": best_gt is not None,
-                "matched_type": best_gt["type"] if best_gt is not None else None,
+                "matched_type": matched_type,
+                "is_emergency": matched_type in _EMERGENCY_TYPES,
             }
         )
     return results, matched_gt_ids
@@ -112,4 +121,5 @@ def analyze_road(
         "recall": round(recall, 2) if recall is not None else None,
         "active_tracks": len(visible_tracks),
         "unique_vehicles_tracked": tracker.total_tracks_created,
+        "vision_emergency_detected": any(d["is_emergency"] for d in labeled_detections),
     }

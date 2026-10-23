@@ -48,13 +48,17 @@ VEHICLE_PROFILES: dict[VehicleType, VehicleProfile] = {
 }
 
 # --- Road geometry (all distances in metres, 1D position along the road) ---
-ROAD_LENGTH_M = 260.0          # spawn point -> despawn point
+# Long enough past the junction (~110m beyond INTERSECTION_EXIT_POS_M) that
+# vehicles drive off the edge of the dashboard view instead of vanishing
+# mid-screen.
+ROAD_LENGTH_M = 330.0          # spawn point -> despawn point
 STOP_LINE_POS_M = 200.0        # where vehicles must stop on red/yellow
 INTERSECTION_EXIT_POS_M = 218.0  # far edge of the intersection box
 LANES_PER_ROAD = 2
 
 SAFE_FOLLOWING_GAP_M = 8.0
 MIN_VEHICLE_GAP_M = 2.0
+QUEUED_SPEED_MPS = 0.5  # below this, a vehicle before the stop line counts as queued
 
 # --- Signal timing (fixed-timer baseline, seconds) ---
 FIXED_GREEN_DURATION_S = 20.0
@@ -62,8 +66,11 @@ YELLOW_DURATION_S = 3.0
 ALL_RED_CLEARANCE_S = 1.0
 
 # --- Spawn ---
-BASE_SPAWN_RATE_PER_S = 0.35   # baseline mean arrivals/sec per road (Poisson)
-SPAWN_RATE_JITTER = 0.9        # applied per-road periodically to create asymmetry
+# Tuned down from 0.35 so the dashboard stays readable at a glance — the
+# intersection still congests and queues still form, there are just few
+# enough vehicles on screen to follow individual ones.
+BASE_SPAWN_RATE_PER_S = 0.12   # baseline mean arrivals/sec per road (Poisson)
+SPAWN_RATE_JITTER = 0.6        # applied per-road periodically to create asymmetry
 
 # --- Simulation loop ---
 TICK_HZ = 20

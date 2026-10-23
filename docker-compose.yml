@@ -1,0 +1,46 @@
+# Whole stack in two containers:
+#   docker compose up --build      -> dashboard at http://localhost:8080
+# The SQLite file lives in a named volume, so history survives a restart.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: smart-traffic-backend
+    environment:
+      # "fixed" or "adaptive" — the controller the main dashboard runs.
+      STMS_CONTROLLER_TYPE: ${STMS_CONTROLLER_TYPE:-adaptive}
+      STMS_DATABASE_URL: sqlite+aiosqlite:////data/traffic.db
+      STMS_CORS_ORIGINS: '["http://localhost:8080","http://127.0.0.1:8080"]'
+    volumes:
+      - traffic-data:/data
+    ports:
+      # Exposed so the Raspberry Pi / ESP32 signal driver can reach the API.
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ""
+        VITE_WS_URL: ws://localhost:8080/ws/simulation
+        VITE_SHADOW_WS_URL: ws://localhost:8080/ws/simulation/shadow
+        VITE_VISION_WS_URL: ws://localhost:8080/ws/vision
+        VITE_ANALYTICS_WS_URL: ws://localhost:8080/ws/analytics
+    image: smart-traffic-frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  traffic-data:

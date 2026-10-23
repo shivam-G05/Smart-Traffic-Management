@@ -5,8 +5,8 @@ import pytest
 
 from vision.camera import ground_truth_boxes, render_road_frame
 from vision.config import FRAME_HEIGHT_PX, FRAME_WIDTH_PX
-from vision.detector import HaarVehicleDetector
-from vision.pipeline import analyze_road
+from vision.detector import Detection, HaarVehicleDetector
+from vision.pipeline import _match_detections, analyze_road
 from vision.tracker import ByteTracker
 
 SAMPLE_ROAD_STATE = {
@@ -84,9 +84,29 @@ def test_analyze_road_returns_expected_shape(detector):
     assert result["recall"] is None or 0.0 <= result["recall"] <= 1.0
     assert result["active_tracks"] >= 0
     assert result["unique_vehicles_tracked"] >= 0
+    for det in result["detections"]:
+        assert "is_emergency" in det
+        assert det["is_emergency"] == (det["matched_type"] in {"ambulance", "fire_truck"})
+    assert result["vision_emergency_detected"] == any(d["is_emergency"] for d in result["detections"])
 
     jpeg_bytes = base64.b64decode(result["frame_jpeg_base64"])
     assert jpeg_bytes[:2] == b"\xff\xd8"  # JPEG magic bytes
+
+
+def test_match_detections_flags_ambulance_and_fire_truck_as_emergency():
+    gt_boxes = ground_truth_boxes(SAMPLE_ROAD_STATE)
+    ambulance_gt = next(gt for gt in gt_boxes if gt["type"] == "ambulance")
+    bus_gt = next(gt for gt in gt_boxes if gt["type"] == "bus")
+
+    # Synthetic detections placed exactly on top of known ground-truth boxes,
+    # bypassing the (probabilistic) Haar cascade so this test is deterministic.
+    ambulance_det = Detection(x=ambulance_gt["x"], y=ambulance_gt["y"], w=ambulance_gt["w"], h=ambulance_gt["h"], confidence=0.5)
+    bus_det = Detection(x=bus_gt["x"], y=bus_gt["y"], w=bus_gt["w"], h=bus_gt["h"], confidence=0.5)
+
+    results, _ = _match_detections([ambulance_det, bus_det], gt_boxes)
+    by_type = {r["matched_type"]: r["is_emergency"] for r in results}
+    assert by_type["ambulance"] is True
+    assert by_type["bus"] is False
 
 
 def test_analyze_road_on_empty_road_has_no_ground_truth(detector):
