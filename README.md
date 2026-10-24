@@ -1234,11 +1234,47 @@ interval over seeds with paired t-tests. Shared machinery (one trial, the
 per-vehicle recorder, the statistics) is in `scripts/experiment_common.py`;
 `tests/test_experiments.py` keeps it all runnable.
 
+Three controllers are compared, all built by
+`backend/app/core/controller_factory.py` (`--controllers` picks a subset,
+fixed first):
+
+| Name | Controller |
+|---|---|
+| `fixed` | Fixed-time, 20 s greens (Milestone 1) |
+| `adaptive` | Density-based green extension, as evaluated in the paper (Milestone 5) |
+| `adaptive_hold` | The same, plus **discharge hold** (below) |
+
+### Discharge hold
+
+The original adaptive rule ends a green (after the 8 s minimum) once the
+served direction's density score no longer beats the waiting direction's
+by 10%. Above capacity that backfires: when both directions are saturated,
+the stopped queue on red (weight 1.5 per vehicle) soon outweighs the
+vehicles moving through on green (0.5), so greens end at the 8 s minimum
+and every phase change spends 4 s on yellow and all-red. The original rule
+loses 19% of capacity this way (table below).
+
+`AdaptiveController(hold_while_discharging=True)` adds the gap-out rule
+actuated signals use: past the minimum, a green can only end once the
+served direction has **gapped out** — no vehicle within 10 m of its stop
+line (`DISCHARGE_ZONE_M`) — *and* the density rule agrees. A saturated
+queue moving off always keeps a vehicle at the line, so it keeps its green
+up to the 45 s maximum; free-flowing arrivals cross 10 m in under a second,
+so a cleared queue still hands over early. The 10 m zone was chosen from
+10 / 15 / 20 / 30 m on a tuning seed (1000) kept apart from the evaluation
+seeds (1–10, capacity 101–105); larger zones held greens too long at
+0.8–1.0x capacity. Yellow, all-red, minimum and maximum green are
+unchanged, so the paper's 50 s maximum-red bound still holds.
+
+The live dashboard can run it with `STMS_CONTROLLER_TYPE=adaptive_hold`;
+the default is still `fixed`.
+
 ### `scripts/benchmark.py` — the paper's Table II
 
 ```bash
-python scripts/benchmark.py                   # ~5 min: 3 demand levels x 10 seeds x 30 min, both controllers
+python scripts/benchmark.py                   # ~2-5 min: 3 demand levels x 10 seeds x 30 min, 3 controllers
 python scripts/benchmark.py --no-preemption   # same without emergency preemption
+python scripts/benchmark.py --controllers fixed,adaptive   # just the paper's two
 python scripts/benchmark.py --csv results.csv # also write every seed's metrics
 python scripts/benchmark.py --duration 300 --seeds 3   # quick check
 ```
@@ -1246,30 +1282,38 @@ python scripts/benchmark.py --duration 300 --seeds 3   # quick check
 Follows the paper's method (Section V-A): λ = 0.08 / 0.12 / 0.18 arrivals/s
 per approach, 1800 s runs with a 60 s warm-up, delay measured over vehicles
 entering between 60 s and 1650 s (all of which leave before the run ends),
-stopped delay = time upstream of the stop line below 0.5 m/s. It reproduces
-Table II:
+stopped delay = time upstream of the stop line below 0.5 m/s. The fixed and
+adaptive rows reproduce Table II exactly:
 
 | Metric | Control | Low (1152 veh/h) | Medium (1728 veh/h) | High (2592 veh/h) |
 |---|---|---|---|---|
 | Mean stopped delay (s) | Fixed | 6.96 ± 0.17 | 7.20 ± 0.20 | 7.36 ± 0.22 |
 | | Adaptive | 4.49 ± 0.10 | 4.60 ± 0.14 | 4.76 ± 0.12 |
-| | Change | −35.5% | −36.1% | −35.3% |
+| | Adaptive + hold | 4.44 ± 0.10 | 4.62 ± 0.16 | 4.89 ± 0.23 |
+| | Adaptive vs fixed | −35.5% | −36.1% | −35.3% |
+| | Adaptive + hold vs fixed | −36.3% | −35.8% | −33.7% |
 | 95th-pct. delay (s) | Fixed | 23.3 ± 0.3 | 23.5 ± 0.3 | 23.6 ± 0.3 |
 | | Adaptive | 13.7 ± 0.4 | 14.2 ± 0.6 | 14.8 ± 1.0 |
+| | Adaptive + hold | 13.8 ± 0.5 | 14.2 ± 0.5 | 15.3 ± 1.5 |
 | Time at high density (%) | Fixed | 10.1 ± 1.6 | 29.5 ± 2.3 | 70.6 ± 1.4 |
 | | Adaptive | 4.4 ± 1.4 | 15.2 ± 2.1 | 45.1 ± 2.5 |
+| | Adaptive + hold | 4.3 ± 1.3 | 15.3 ± 1.8 | 46.4 ± 3.0 |
 | Throughput (veh/h) | Fixed | 1152 ± 13 | 1724 ± 15 | 2548 ± 19 |
 | | Adaptive | 1150 ± 13 | 1714 ± 19 | 2545 ± 25 |
+| | Adaptive + hold | 1150 ± 13 | 1717 ± 22 | 2562 ± 27 |
 
-All delay changes p < 0.001; throughput p = 0.38 / 0.03 / 0.82, as in the
-paper. With `--no-preemption` the delay reduction is 38.7 / 40.0 / 41.9%,
-matching the paper's text. The adaptive controller wins by ending greens
-early: its mean green is ~9.5 s against the fixed 20 s.
+All delay changes p < 0.001; adaptive-vs-fixed throughput p = 0.38 / 0.03 /
+0.82, as in the paper. With `--no-preemption` the adaptive delay reduction
+is 38.7 / 40.0 / 41.9% (matching the paper's text) and adaptive + hold
+39.1 / 38.6 / 39.4%. **At these demand levels the discharge hold keeps the
+original controller's gain** (within ~1.6 points); both win by ending
+greens early once the served queue has cleared.
 
 ### `scripts/oversaturation.py` — above capacity
 
 ```bash
-python scripts/oversaturation.py              # ~15 min: capacity runs + 6 demand levels x 10 seeds
+python scripts/oversaturation.py --no-preemption   # ~10-25 min: capacity runs + 6 demand levels x 10 seeds, 3 controllers
+python scripts/oversaturation.py                   # same with emergency preemption
 python scripts/oversaturation.py --ratios 0.9,1.1,1.3 --seeds 5
 ```
 
@@ -1291,38 +1335,47 @@ dashboard and Table II do not use (`simulation/entities/road.py`):
   the entry rather than the junction would set the capacity (measured: 8,887
   vs 9,533 veh/h, fixed-time, saturated).
 
-Measured with the defaults (5 capacity seeds, 10 paired seeds per level):
+**Preemption off is the main condition here.** Emergency vehicles are 1%
+of arrivals, so at these demands one arrives every ~15–30 s and preemption
+keeps cutting greens for every controller (the fixed plan's greens average
+~16–17 s instead of 20 s with it on). Turning it off isolates the signal
+timing itself; the preemption-on results follow.
 
-| | Fixed | Adaptive | Change |
+Measured, preemption off (5 capacity seeds, 10 paired seeds per level):
+
+| Capacity | Fixed | Adaptive | Adaptive + hold |
 |---|---|---|---|
-| Capacity (veh/h, junction) | 9701 ± 197 | 8861 ± 321 | −8.7% (p 0.004) |
-| Mean green when saturated (s) | 16.7 ± 1.4 | 11.1 ± 1.1 | −33.6% |
+| veh/h, junction | 10008 ± 89 | 8112 ± 155 (−18.9%) | **10988 ± 41 (+9.8%)** |
+| Mean green when saturated (s) | 20.0 | 8.0 | 37.6 |
 
 | Demand / fixed capacity | 0.6x | 0.8x | 0.9x | 1.0x | 1.2x | 1.5x |
 |---|---|---|---|---|---|---|
-| Throughput, fixed (veh/h) | 5852 | 7748 | 8684 | 9557 | 9870 | 9670 |
-| Throughput, adaptive (veh/h) | 5856 | 7730 | 8627 | 9128 | 8920 | 8952 |
-| Delay incl. still waiting, fixed (s) | 6.8 | 9.0 | 11.2 | 14.8 | 126.0 | 335.2 |
-| Delay incl. still waiting, adaptive (s) | 5.4 | 9.0 | 15.4 | 48.4 | 209.7 | 383.1 |
-| Queue growth, fixed (veh/min) | 0.0 | 0.0 | 0.0 | 0.3 | 27.3 | 84.4 |
-| Queue growth, adaptive (veh/min) | 0.0 | 0.0 | 0.7 | 6.8 | 42.9 | 96.1 |
-| Spillback, fixed (% approach-time) | 0.0 | 0.0 | 1.3 | 5.0 | 78.9 | 96.9 |
-| Spillback, adaptive (% approach-time) | 0.0 | 0.1 | 5.0 | 37.1 | 88.7 | 97.2 |
+| Delay incl. still waiting, fixed (s) | 6.4 | 7.7 | 8.9 | 12.2 | 115.3 | 312.2 |
+| Delay incl. still waiting, adaptive (s) | 4.6 | 10.1 | 41.5 | 148.7 | 298.2 | 440.1 |
+| Delay incl. still waiting, adaptive + hold (s) | **4.3** | **6.4** | **8.2** | **10.6** | **48.7** | **245.6** |
+| Adaptive + hold vs fixed | −33% | −16% | −8% | −13% (p 0.14) | −58% | −21% |
+| Throughput, fixed (veh/h) | 6022 | 8084 | 8937 | 9981 | 10352 | 10073 |
+| Throughput, adaptive (veh/h) | 6011 | 8038 | 8502 | 8308 | 8175 | 8141 |
+| Throughput, adaptive + hold (veh/h) | 6011 | 8057 | 8919 | 9972 | **11331** | **11090** |
+| Queue growth, fixed / adaptive / hold (veh/min) | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 5.6 / 0 | 0.2 / 28.9 / 0 | 26.9 / 62.8 / 8.6 | 82.5 / 113.7 / 65.3 |
+| Spillback, fixed / adaptive / hold (% approach-time) | 0 / 0 / 0 | 0 / 0.1 / 0 | 0 / 28.7 / 0 | 2.6 / 77.9 / 0.7 | 72.7 / 94.5 / 50.7 | 96.7 / 98.4 / 95.2 |
+| Mean green, fixed / adaptive / hold (s) | 20 / 8.8 / 10.7 | 20 / 8.3 / 13.6 | 20 / 8.1 / 16.5 | 20 / 8.1 / 21.6 | 20 / 8.0 / 36.8 | 20 / 8.1 / 39.3 |
 
-(Means over seeds; the script prints confidence intervals, p-values,
-served share, final queue and first-spillback time as well.)
+With preemption on, the same pattern holds with smaller margins, because
+preemption cuts the hold's long greens too: capacity 9701 (fixed) / 8861
+(adaptive, −8.7%) / 10012 (hold, +3.2%); hold-vs-fixed delay −25% / −16% /
+−12% / +5% (p 0.26) / −18% / −8% and throughput +2.8% / +3.5% at 1.2x /
+1.5x, against the original adaptive controller's +227% delay and −4.5% to
+−9.6% throughput at and above capacity.
 
-**The adaptive controller's advantage disappears near capacity and reverses
-above it.** It gives 22% less delay at 0.6x, the same at 0.8x, and is
-worse from 0.9x on: 4.5–9.6% less throughput at and above capacity, faster queue growth and
-more spillback. The cause is visible in the mean green. The rule ends a
-green once the served direction's score no longer beats the waiting
-direction's by 10%; when both directions are saturated, the stopped queue
-on red (weight 1.5 per vehicle) soon outweighs the vehicles still
-discharging on green (0.5), so greens stay short (~11 s). Every phase
-change costs 4 s of yellow and all-red, so short greens lose capacity
-exactly when it is scarcest. Fixing this (e.g. holding green while the
-served queue is still discharging) is a direct next step.
+**Summary.** The original adaptive rule wins below ~0.8x capacity and loses
+badly from 0.9x up (up to 19% less capacity). Adding the discharge hold
+keeps the low-demand gain and turns the high-demand loss into a gain:
+lower delay than fixed timing at every tested level (significant at all but
+1.0x) and ~10% more capacity, because saturated queues get long greens
+(~37 s) instead of short ones. Full tables with confidence intervals,
+p-values, served share, final queue and first-spillback times are what the
+script prints.
 
 ### Model notes worth knowing before quoting these numbers
 
@@ -1330,11 +1383,16 @@ served queue is still discharging) is a direct next step.
   every 1/λ seconds (a deterministic headway); only the rate is redrawn,
   every 15 s, as λ·U(0.4, 1.6). The paper describes the arrivals as a
   Poisson process.
-- **The simulated saturation flow is high.** Capacity of ~9,700 veh/h at a
+- **The simulated saturation flow is high.** Capacity of ~10,000 veh/h at a
   green share of ~0.4 means ~1.2 s headways per lane: the car-following
   model has no reaction time or start-up lost time, and motorcycles (25% of
   vehicles) count as full vehicles. Absolute capacities are therefore not
-  field values; the fixed-vs-adaptive comparison is what these runs show.
+  field values; the comparison between controllers is what these runs show.
+  With real start-up lost time, short greens would cost even more, so the
+  original adaptive rule's capacity loss is if anything understated.
+- **Emergency vehicles are frequent** (1% of arrivals), far more than at a
+  real junction, which is why the above-capacity results are reported with
+  preemption off as well as on.
 - **Everything is simulation**, from this project's own traffic model and
   the vehicle positions it knows exactly — not a real junction, and not the
   camera pipeline.
@@ -1360,7 +1418,7 @@ Optional environment variables (`STMS_` prefix, see `backend/app/core/config.py`
 
 | Variable | Default | Effect |
 |---|---|---|
-| `STMS_CONTROLLER_TYPE` | `fixed` | `adaptive` switches the primary dashboard to the Milestone 5 adaptive controller (both always get Milestone 6 emergency preemption) |
+| `STMS_CONTROLLER_TYPE` | `fixed` | `adaptive` switches the primary dashboard to the Milestone 5 adaptive controller, `adaptive_hold` to the same with the discharge hold (see Experiments); every controller gets Milestone 6 emergency preemption |
 | `STMS_DATABASE_URL` | `sqlite+aiosqlite:///./traffic.db` | Point at a `postgresql+asyncpg://...` DSN to use Postgres instead — no code change needed |
 | `STMS_COMPARISON_SEED` | `42` | Shared seed for the primary + Milestone 9 shadow runner, so both see identical vehicle arrivals |
 
@@ -1381,7 +1439,7 @@ cd backend
 python -m pytest -q
 ```
 
-79 tests across `tests/test_simulation.py`, `tests/test_api.py`,
+83 tests across `tests/test_simulation.py`, `tests/test_api.py`,
 `tests/test_connection_manager.py`, `tests/test_vision.py`,
 `tests/test_tracker.py`, `tests/test_density.py`,
 `tests/test_adaptive_controller.py`, `tests/test_emergency_preemption.py`,

@@ -20,7 +20,7 @@ from app.ws.connection_manager import ConnectionManager
 
 logger = logging.getLogger("main")
 
-_OTHER_CONTROLLER_TYPE = {"fixed": "adaptive", "adaptive": "fixed"}
+_OTHER_CONTROLLER_TYPE = {"fixed": "adaptive", "adaptive": "fixed", "adaptive_hold": "fixed"}
 
 
 async def _run_comparison_loop(app: FastAPI, interval: float = 1.0) -> None:

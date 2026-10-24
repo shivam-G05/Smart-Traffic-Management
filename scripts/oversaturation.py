@@ -60,12 +60,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import numpy as np  # noqa: E402
 
 from experiment_common import (  # noqa: E402
+    CONTROLLER_LABELS,
+    CONTROLLERS,
     TrialResult,
     TrialSpec,
     fmt_change,
     fmt_ci,
     mean_ci,
     mean_or_nan,
+    parse_controllers,
     run_trials,
     use_utf8_stdout,
 )
@@ -80,7 +83,6 @@ DEFAULT_DURATION_S = 1800.0
 # 15 s as rate x U(0.4, 1.6), so even the lowest draw (0.6/s, 2160 veh/h
 # per approach) is far above what one approach can discharge.
 DEFAULT_SATURATION_RATE = 1.5
-CONTROLLERS = ("fixed", "adaptive")
 
 
 @dataclass(frozen=True)
@@ -139,23 +141,26 @@ def over_metrics(result: TrialResult, warmup_s: float = WARMUP_S,
     )
 
 
-def _spec(controller: str, seed: int, rate: float, duration_s: float, dt: float) -> TrialSpec:
+def _spec(controller: str, seed: int, rate: float, duration_s: float, dt: float,
+          preemption: bool = True) -> TrialSpec:
     return TrialSpec(controller=controller, seed=seed, spawn_rate_per_s=rate, duration_s=duration_s,
-                     dt=dt, entry_backlog=True, insert_at_speed=True)
+                     dt=dt, preemption=preemption, entry_backlog=True, insert_at_speed=True)
 
 
-def measure_capacity(seeds: list[int], duration_s: float, saturation_rate: float,
-                     jobs: int | None, dt: float = 0.05) -> dict[str, list[OverMetrics]]:
-    specs = [_spec(c, s, saturation_rate, duration_s, dt) for c in CONTROLLERS for s in seeds]
+def measure_capacity(seeds: list[int], duration_s: float, saturation_rate: float, jobs: int | None,
+                     dt: float = 0.05, preemption: bool = True,
+                     controllers: tuple[str, ...] = CONTROLLERS) -> dict[str, list[OverMetrics]]:
+    specs = [_spec(c, s, saturation_rate, duration_s, dt, preemption) for c in controllers for s in seeds]
     results = iter(run_trials(specs, jobs=jobs))
-    return {c: [over_metrics(next(results)) for _ in seeds] for c in CONTROLLERS}
+    return {c: [over_metrics(next(results)) for _ in seeds] for c in controllers}
 
 
 def run_sweep(rates: list[float], seeds: list[int], duration_s: float, jobs: int | None,
-              dt: float = 0.05) -> list[dict[str, list[OverMetrics]]]:
-    specs = [_spec(c, s, rate, duration_s, dt) for rate in rates for c in CONTROLLERS for s in seeds]
+              dt: float = 0.05, preemption: bool = True,
+              controllers: tuple[str, ...] = CONTROLLERS) -> list[dict[str, list[OverMetrics]]]:
+    specs = [_spec(c, s, rate, duration_s, dt, preemption) for rate in rates for c in controllers for s in seeds]
     results = iter(run_trials(specs, jobs=jobs))
-    return [{c: [over_metrics(next(results)) for _ in seeds] for c in CONTROLLERS} for _ in rates]
+    return [{c: [over_metrics(next(results)) for _ in seeds] for c in controllers} for _ in rates]
 
 
 SWEEP_METRICS = [
@@ -180,50 +185,59 @@ def _fmt_first_spillback(values: list[float]) -> str:
 
 def format_report(capacity: dict[str, list[OverMetrics]], ratios: list[float], rates: list[float],
                   sweep: list[dict[str, list[OverMetrics]]], duration_s: float, n_seeds: int,
-                  n_capacity_seeds: int, saturation_rate: float) -> str:
+                  n_capacity_seeds: int, saturation_rate: float, preemption: bool = True) -> str:
+    controllers = list(capacity)
+    base = controllers[0]
+
+    def col(runs, attr):
+        return [getattr(m, attr) for m in runs]
+
     lines = [
+        f"Emergency preemption {'enabled' if preemption else 'disabled'}.",
+        "",
         f"Capacity (every approach flooded at {saturation_rate:g} arrivals/s, {n_capacity_seeds} seeds x "
         f"{duration_s:g} s; throughput after the {WARMUP_S:g} s warm-up):",
         "",
         "| Control | Capacity (veh/h, junction) | Per approach (veh/h) | Mean green (s) | Mean queued on links (veh) |",
         "|---|---|---|---|---|",
     ]
-    for c in CONTROLLERS:
-        throughput = [m.throughput_vph for m in capacity[c]]
-        mean, half = mean_ci(throughput)
+    for c in controllers:
+        mean, half = mean_ci(col(capacity[c], "throughput_vph"))
         lines.append(
-            f"| {c.capitalize()} | {mean:.0f} ± {half:.0f} | {mean / 4:.0f} "
-            f"| {fmt_ci([m.mean_green_s for m in capacity[c]], 1)} "
-            f"| {fmt_ci([m.mean_queued for m in capacity[c]], 1)} |"
+            f"| {CONTROLLER_LABELS[c]} | {mean:.0f} ± {half:.0f} | {mean / 4:.0f} "
+            f"| {fmt_ci(col(capacity[c], 'mean_green_s'), 1)} | {fmt_ci(col(capacity[c], 'mean_queued'), 1)} |"
         )
-    lines.append(
-        f"| Change | {fmt_change([m.throughput_vph for m in capacity['fixed']], [m.throughput_vph for m in capacity['adaptive']])} "
-        f"| | {fmt_change([m.mean_green_s for m in capacity['fixed']], [m.mean_green_s for m in capacity['adaptive']])} | |"
-    )
+    for c in controllers[1:]:
+        lines.append(
+            f"| {CONTROLLER_LABELS[c]} vs fixed "
+            f"| {fmt_change(col(capacity[base], 'throughput_vph'), col(capacity[c], 'throughput_vph'))} "
+            f"| | {fmt_change(col(capacity[base], 'mean_green_s'), col(capacity[c], 'mean_green_s'))} | |"
+        )
 
     header = " | ".join(f"{r:g}x (λ={rate:.3f}, {rate * 4 * 3600:.0f} veh/h)" for r, rate in zip(ratios, rates))
     lines += [
         "",
-        f"Demand sweep (entry backlog on, {n_seeds} paired seeds x {duration_s:g} s; "
-        "demand as a multiple of the fixed-time capacity above):",
+        f"Demand sweep ({n_seeds} paired seeds x {duration_s:g} s; demand as a multiple of the "
+        "fixed-time capacity above):",
         "",
         f"| Metric | Control | {header} |",
         "|---|---|" + "---|" * len(ratios),
     ]
     for label, attr, digits in SWEEP_METRICS:
-        fixed = [[getattr(m, attr) for m in level["fixed"]] for level in sweep]
-        adaptive = [[getattr(m, attr) for m in level["adaptive"]] for level in sweep]
-        lines.append(f"| {label} | Fixed | " + " | ".join(fmt_ci(v, digits) for v in fixed) + " |")
-        lines.append("| | Adaptive | " + " | ".join(fmt_ci(v, digits) for v in adaptive) + " |")
+        values = {c: [col(level[c], attr) for level in sweep] for c in controllers}
+        for i, c in enumerate(controllers):
+            lines.append(f"| {label if i == 0 else ''} | {CONTROLLER_LABELS[c]} | "
+                         + " | ".join(fmt_ci(v, digits) for v in values[c]) + " |")
         if attr != "demand_vph":
-            lines.append("| | Change | " + " | ".join(
-                fmt_change(f, a) for f, a in zip(fixed, adaptive)) + " |")
-    for c in CONTROLLERS:
-        lines.append(f"| First spillback | {c.capitalize()} | " + " | ".join(
-            _fmt_first_spillback([m.first_spillback_s for m in level[c]]) for level in sweep) + " |")
+            for c in controllers[1:]:
+                lines.append(f"| | {CONTROLLER_LABELS[c]} vs fixed | " + " | ".join(
+                    fmt_change(f, a) for f, a in zip(values[base], values[c])) + " |")
+    for c in controllers:
+        lines.append(f"| First spillback | {CONTROLLER_LABELS[c]} | " + " | ".join(
+            _fmt_first_spillback(col(level[c], "first_spillback_s")) for level in sweep) + " |")
     lines += [
         "",
-        "Mean ± 95% confidence interval over seeds; change = paired difference relative to fixed-time "
+        "Mean ± 95% confidence interval over seeds; \"vs fixed\" = paired difference relative to fixed-time "
         "control, p = paired t-test. Demand is the realized arrival rate after the warm-up.",
     ]
     return "\n".join(lines)
@@ -235,7 +249,7 @@ def write_csv(path: Path, ratios, rates, seeds, sweep) -> None:
         writer = csv.writer(f)
         writer.writerow(["ratio", "spawn_rate_per_s", "seed", "controller", *names])
         for ratio, rate, level in zip(ratios, rates, sweep):
-            for c in CONTROLLERS:
+            for c in level:
                 for seed, m in zip(seeds, level[c]):
                     writer.writerow([ratio, round(rate, 5), seed, c, *(round(getattr(m, n), 4) for n in names)])
 
@@ -243,7 +257,7 @@ def write_csv(path: Path, ratios, rates, seeds, sweep) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ratios", type=lambda s: [float(x) for x in s.split(",")], default=DEFAULT_RATIOS,
-                        help="demand as multiples of the fixed-time capacity (default: 0.8,1.0,1.2,1.5)")
+                        help="demand as multiples of the fixed-time capacity (default: 0.6,0.8,0.9,1.0,1.2,1.5)")
     parser.add_argument("--seeds", type=int, default=DEFAULT_SEEDS, help="paired seeds per demand level (default: 10)")
     parser.add_argument("--capacity-seeds", type=int, default=DEFAULT_CAPACITY_SEEDS,
                         help="seeds for the capacity runs (default: 5)")
@@ -251,19 +265,25 @@ def main(argv: list[str] | None = None) -> None:
                         help="simulated seconds per run (default: 1800)")
     parser.add_argument("--saturation-rate", type=float, default=DEFAULT_SATURATION_RATE,
                         help="arrivals/s per approach for the capacity runs (default: 1.5)")
+    parser.add_argument("--controllers", type=parse_controllers, default=CONTROLLERS,
+                        help="comma-separated, fixed first (default: fixed,adaptive,adaptive_hold)")
+    parser.add_argument("--no-preemption", action="store_true",
+                        help="run without emergency preemption (see the note on emergency frequency above)")
     parser.add_argument("--jobs", type=int, default=None, help="parallel processes (default: all CPU cores)")
     parser.add_argument("--csv", type=Path, help="also write every sweep run's metrics to this CSV file")
     args = parser.parse_args(argv)
 
     use_utf8_stdout()
+    preemption = not args.no_preemption
     capacity_seeds = list(range(101, 101 + args.capacity_seeds))  # kept apart from the sweep seeds
     seeds = list(range(1, args.seeds + 1))
-    capacity = measure_capacity(capacity_seeds, args.duration, args.saturation_rate, args.jobs)
+    capacity = measure_capacity(capacity_seeds, args.duration, args.saturation_rate, args.jobs,
+                                preemption=preemption, controllers=args.controllers)
     fixed_capacity_vph = statistics.mean(m.throughput_vph for m in capacity["fixed"])
     rates = [r * fixed_capacity_vph / (4 * 3600) for r in args.ratios]
-    sweep = run_sweep(rates, seeds, args.duration, args.jobs)
+    sweep = run_sweep(rates, seeds, args.duration, args.jobs, preemption=preemption, controllers=args.controllers)
     print(format_report(capacity, args.ratios, rates, sweep, args.duration, len(seeds),
-                        len(capacity_seeds), args.saturation_rate))
+                        len(capacity_seeds), args.saturation_rate, preemption))
     if args.csv:
         write_csv(args.csv, args.ratios, rates, seeds, sweep)
         print(f"\nPer-seed results written to {args.csv}", file=sys.stderr)

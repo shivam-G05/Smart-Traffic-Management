@@ -33,11 +33,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from experiment_common import (  # noqa: E402
+    CONTROLLER_LABELS,
+    CONTROLLERS,
     TrialResult,
     TrialSpec,
     fmt_change,
     fmt_ci,
     mean_or_nan,
+    parse_controllers,
     percentile,
     run_trials,
     use_utf8_stdout,
@@ -95,45 +98,48 @@ METRICS = [
 
 
 def run_benchmark(levels: dict[str, float], seeds: list[int], duration_s: float,
-                  preemption: bool = True, jobs: int | None = None,
-                  dt: float = 0.05) -> dict[str, dict[str, list[TrialMetrics]]]:
-    """Returns {level: {"fixed": [metrics per seed], "adaptive": [...]}}."""
+                  preemption: bool = True, jobs: int | None = None, dt: float = 0.05,
+                  controllers: tuple[str, ...] = CONTROLLERS) -> dict[str, dict[str, list[TrialMetrics]]]:
+    """Returns {level: {controller: [metrics per seed]}}."""
     specs = [
         TrialSpec(controller=c, seed=s, spawn_rate_per_s=rate, duration_s=duration_s,
                   dt=dt, preemption=preemption)
-        for rate in levels.values() for c in ("fixed", "adaptive") for s in seeds
+        for rate in levels.values() for c in controllers for s in seeds
     ]
     results = iter(run_trials(specs, jobs=jobs))
     table: dict[str, dict[str, list[TrialMetrics]]] = {}
     for level in levels:
-        table[level] = {c: [trial_metrics(next(results)) for _ in seeds] for c in ("fixed", "adaptive")}
+        table[level] = {c: [trial_metrics(next(results)) for _ in seeds] for c in controllers}
     return table
 
 
 def format_table(table: dict, levels: dict[str, float], duration_s: float, n_seeds: int,
                  preemption: bool) -> str:
     names = list(levels)
+    controllers = list(table[names[0]])
     lines = [
-        f"Fixed-time vs adaptive, preemption {'enabled' if preemption else 'disabled'}: "
-        f"{n_seeds} paired seeds x {duration_s:g} s per level.",
+        f"{' vs '.join(CONTROLLER_LABELS[c] for c in controllers)}, preemption "
+        f"{'enabled' if preemption else 'disabled'}: {n_seeds} paired seeds x {duration_s:g} s per level.",
         "",
         "| Metric | Control | " + " | ".join(
             f"{n} (λ={levels[n]:g}, {levels[n] * 4 * 3600:.0f} veh/h)" for n in names) + " |",
         "|---|---|" + "---|" * len(names),
     ]
     for label, attr, digits in METRICS:
-        fixed = {n: [getattr(m, attr) for m in table[n]["fixed"]] for n in names}
-        adaptive = {n: [getattr(m, attr) for m in table[n]["adaptive"]] for n in names}
-        lines.append(f"| {label} | Fixed | " + " | ".join(fmt_ci(fixed[n], digits) for n in names) + " |")
-        lines.append("| | Adaptive | " + " | ".join(fmt_ci(adaptive[n], digits) for n in names) + " |")
-        lines.append("| | Change | " + " | ".join(fmt_change(fixed[n], adaptive[n]) for n in names) + " |")
+        values = {c: {n: [getattr(m, attr) for m in table[n][c]] for n in names} for c in controllers}
+        for i, c in enumerate(controllers):
+            lines.append(f"| {label if i == 0 else ''} | {CONTROLLER_LABELS[c]} | "
+                         + " | ".join(fmt_ci(values[c][n], digits) for n in names) + " |")
+        for c in controllers[1:]:
+            lines.append(f"| | {CONTROLLER_LABELS[c]} vs fixed | "
+                         + " | ".join(fmt_change(values[controllers[0]][n], values[c][n]) for n in names) + " |")
     lines += [
         "",
-        "Mean ± 95% confidence interval over seeds. Change = paired difference relative to "
-        "fixed-time control, p = paired t-test.",
+        f"Mean ± 95% confidence interval over seeds. \"vs fixed\" = paired difference relative to "
+        f"{CONTROLLER_LABELS[controllers[0]]}, p = paired t-test.",
     ]
-    unfinished = sum(m.unfinished for n in names for c in ("fixed", "adaptive") for m in table[n][c])
-    measured = sum(m.measured_vehicles for n in names for c in ("fixed", "adaptive") for m in table[n][c])
+    unfinished = sum(m.unfinished for n in names for c in controllers for m in table[n][c])
+    measured = sum(m.measured_vehicles for n in names for c in controllers for m in table[n][c])
     lines.append(f"Measured vehicles: {measured}; still on the road at the end of their run: {unfinished}.")
     return "\n".join(lines)
 
@@ -143,7 +149,7 @@ def write_csv(path: Path, table: dict, levels: dict[str, float], seeds: list[int
         writer = csv.writer(f)
         writer.writerow(["level", "spawn_rate_per_s", "seed", "controller", *TrialMetrics.__dataclass_fields__])
         for level, rate in levels.items():
-            for controller in ("fixed", "adaptive"):
+            for controller in table[level]:
                 for seed, m in zip(seeds, table[level][controller]):
                     writer.writerow([level, rate, seed, controller, *(round(getattr(m, f), 4) if isinstance(
                         getattr(m, f), float) else getattr(m, f) for f in TrialMetrics.__dataclass_fields__)])
@@ -164,7 +170,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seeds", type=int, default=DEFAULT_SEEDS, help="seeds per level, 1..N (default: 10)")
     parser.add_argument("--levels", type=_parse_levels, default=DEFAULT_LEVELS,
                         help='name=arrivals/s/approach pairs (default: "low=0.08,medium=0.12,high=0.18")')
-    parser.add_argument("--no-preemption", action="store_true", help="run both controllers without preemption")
+    parser.add_argument("--controllers", type=parse_controllers, default=CONTROLLERS,
+                        help="comma-separated, fixed first (default: fixed,adaptive,adaptive_hold)")
+    parser.add_argument("--no-preemption", action="store_true", help="run every controller without preemption")
     parser.add_argument("--jobs", type=int, default=None, help="parallel processes (default: all CPU cores)")
     parser.add_argument("--csv", type=Path, help="also write every seed's metrics to this CSV file")
     args = parser.parse_args(argv)
@@ -172,7 +180,8 @@ def main(argv: list[str] | None = None) -> None:
     use_utf8_stdout()
     seeds = list(range(1, args.seeds + 1))
     preemption = not args.no_preemption
-    table = run_benchmark(args.levels, seeds, args.duration, preemption=preemption, jobs=args.jobs)
+    table = run_benchmark(args.levels, seeds, args.duration, preemption=preemption, jobs=args.jobs,
+                          controllers=args.controllers)
     print(format_table(table, args.levels, args.duration, len(seeds), preemption))
     if args.csv:
         write_csv(args.csv, table, args.levels, seeds)

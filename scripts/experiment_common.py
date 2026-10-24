@@ -29,9 +29,29 @@ from simulation.config import LightState, RoadName  # noqa: E402
 from simulation.engine import SimulationEngine  # noqa: E402
 
 
+CONTROLLERS = ("fixed", "adaptive", "adaptive_hold")
+CONTROLLER_LABELS = {
+    "fixed": "Fixed",
+    "adaptive": "Adaptive",
+    "adaptive_hold": "Adaptive + hold",
+}
+
+
+def parse_controllers(text: str) -> tuple[str, ...]:
+    """'fixed,adaptive' -> ("fixed", "adaptive"). Fixed-time must come first:
+    every comparison is reported relative to it."""
+    names = tuple(name.strip() for name in text.split(","))
+    unknown = [n for n in names if n not in CONTROLLER_LABELS]
+    if unknown:
+        raise ValueError(f"Unknown controller(s) {unknown}; choose from {list(CONTROLLER_LABELS)}")
+    if names[0] != "fixed":
+        raise ValueError("The first controller must be 'fixed' (the comparison baseline)")
+    return names
+
+
 @dataclass(frozen=True)
 class TrialSpec:
-    controller: str              # "fixed" or "adaptive"
+    controller: str              # one of CONTROLLERS (see controller_factory.build_controller)
     seed: int
     spawn_rate_per_s: float      # mean arrivals per second per approach
     duration_s: float = 1800.0
