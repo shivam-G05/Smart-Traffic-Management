@@ -154,3 +154,19 @@ def test_oversaturated_run_cannot_serve_all_demand():
     assert m.queue_growth_vpm > 0
     assert m.spillback_pct > 0
     assert m.delay_all_lb_s >= m.delay_served_s
+
+
+ablation = _load("ablation")
+
+
+def test_ablation_runs_every_variant_against_the_reference():
+    table = ablation.run_ablation({"high": 0.18}, seeds=[1], duration_s=200, jobs=1)
+    assert len(table["high"]) == len(ablation.VARIANTS)
+    text = ablation.format_table(table, {"high": 0.18}, 200, 1)
+    assert "Adaptive (reference)" in text and "0 violations" in text
+
+
+def test_webster_trials_get_a_demand_specific_green():
+    low = common.TrialSpec("webster", 1, 0.05, duration_s=60).controller_options()["green_s"]
+    high = common.TrialSpec("webster", 1, 0.6, duration_s=60).controller_options()["green_s"]
+    assert low < high

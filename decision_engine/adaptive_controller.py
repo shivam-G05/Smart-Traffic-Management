@@ -8,8 +8,15 @@ green phase lasts* — yellow and all-red clearance durations are always the
 same fixed values FixedTimerController uses, never shortened or skipped.
 """
 
-from decision_engine.density import road_density_score
-from simulation.config import ALL_RED_CLEARANCE_S, STOP_LINE_POS_M, YELLOW_DURATION_S
+from collections.abc import Mapping
+
+from decision_engine.density import (
+    DENSITY_WEIGHTS,
+    MOVING_MULTIPLIER,
+    QUEUED_MULTIPLIER,
+    road_density_score,
+)
+from simulation.config import ALL_RED_CLEARANCE_S, STOP_LINE_POS_M, YELLOW_DURATION_S, VehicleType
 from simulation.controllers.base_controller import SignalControllerBase
 from simulation.controllers.fixed_timer_controller import (
     _LIGHT_BY_PHASE,
@@ -59,6 +66,9 @@ class AdaptiveController(SignalControllerBase):
         extension_threshold: float = EXTENSION_THRESHOLD,
         hold_while_discharging: bool = False,
         discharge_zone_m: float = DISCHARGE_ZONE_M,
+        class_weights: Mapping[VehicleType, float] = DENSITY_WEIGHTS,
+        queued_multiplier: float = QUEUED_MULTIPLIER,
+        moving_multiplier: float = MOVING_MULTIPLIER,
     ):
         """hold_while_discharging=False is the controller the paper
         evaluates. Measured above capacity (scripts/oversaturation.py) it
@@ -70,6 +80,9 @@ class AdaptiveController(SignalControllerBase):
         gapped out — no vehicle within discharge_zone_m of its stop line —
         before it can end, so a saturated queue keeps its green (up to
         max_green_s) while a cleared one still hands over early.
+
+        class_weights and the two multipliers default to the density score
+        of decision_engine/density.py; scripts/ablation.py varies them.
         """
         self.phase = Phase.NS_GREEN
         self._elapsed_in_phase = 0.0
@@ -79,6 +92,9 @@ class AdaptiveController(SignalControllerBase):
         self.extension_threshold = extension_threshold
         self.hold_while_discharging = hold_while_discharging
         self.discharge_zone_m = discharge_zone_m
+        self.class_weights = class_weights
+        self.queued_multiplier = queued_multiplier
+        self.moving_multiplier = moving_multiplier
 
     def update(self, intersection: Intersection, dt: float) -> None:
         if self._apply_phase_lights_pending:
@@ -100,16 +116,24 @@ class AdaptiveController(SignalControllerBase):
             return True
         if self._elapsed_in_phase < self.min_green_s:
             return False
+        return self._green_ready_to_end(intersection)
+
+    def _green_ready_to_end(self, intersection: Intersection) -> bool:
+        """Between min and max green: may the current green end now? The
+        one decision a subclass replaces (see decision_engine/baselines.py);
+        the phase sequence, yellow, all-red and green bounds stay shared."""
         if self.hold_while_discharging and self._still_discharging(intersection, _GREEN_GROUP[self.phase]):
             return False
-
         active_score = self._group_density(intersection, _GREEN_GROUP[self.phase])
         waiting_score = self._group_density(intersection, _WAITING_GROUP[self.phase])
         return active_score <= waiting_score * self.extension_threshold
 
-    @staticmethod
-    def _group_density(intersection: Intersection, group) -> float:
-        return sum(road_density_score(intersection.roads[name]) for name in group)
+    def _group_density(self, intersection: Intersection, group) -> float:
+        return sum(
+            road_density_score(intersection.roads[name], self.class_weights,
+                               self.queued_multiplier, self.moving_multiplier)
+            for name in group
+        )
 
     def _still_discharging(self, intersection: Intersection, group) -> bool:
         zone_start = STOP_LINE_POS_M - self.discharge_zone_m

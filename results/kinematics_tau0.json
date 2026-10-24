@@ -1,0 +1,62 @@
+{
+ "full vehicle mix": {
+  "headway_by_position": [
+   0.49,
+   2.67,
+   1.43,
+   1.2,
+   1.05,
+   1.08,
+   1.15,
+   1.17,
+   1.19,
+   1.19
+  ],
+  "samples_by_position": [
+   1440,
+   1440,
+   1440,
+   1440,
+   1440,
+   1440,
+   1440,
+   1440,
+   1439,
+   1439
+  ],
+  "saturation_headway_s": 1.138,
+  "saturation_headway_ci": 0.012,
+  "saturation_flow_vphpl": 3164,
+  "startup_lost_time_s": 1.23
+ },
+ "cars only": {
+  "headway_by_position": [
+   0.52,
+   1.88,
+   0.97,
+   0.77,
+   0.67,
+   0.51,
+   0.47,
+   0.46,
+   0.46,
+   0.46
+  ],
+  "samples_by_position": [
+   1439,
+   1439,
+   1439,
+   1439,
+   1439,
+   1439,
+   1439,
+   1439,
+   1439,
+   1438
+  ],
+  "saturation_headway_s": 0.507,
+  "saturation_headway_ci": 0.002,
+  "saturation_flow_vphpl": 7102,
+  "startup_lost_time_s": 2.12
+ }
+}

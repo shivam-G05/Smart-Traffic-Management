@@ -12,6 +12,8 @@ is exactly the "needs green" pressure this score exists to capture, while a
 vehicle still approaching at speed will likely clear on its own.
 """
 
+from collections.abc import Mapping
+
 from simulation.config import VehicleType
 from simulation.entities.intersection import Intersection
 from simulation.entities.lane import Lane
@@ -36,16 +38,30 @@ def vehicle_density_weight(vehicle: Vehicle) -> float:
     return DENSITY_WEIGHTS[vehicle.vehicle_type]
 
 
-def lane_density_score(lane: Lane) -> float:
+# The optional weights/multiplier arguments below exist for the ablation
+# experiments (scripts/ablation.py), which re-run the controller with
+# different scoring; every caller in the live system uses the defaults.
+
+def lane_density_score(
+    lane: Lane,
+    weights: Mapping[VehicleType, float] = DENSITY_WEIGHTS,
+    queued_multiplier: float = QUEUED_MULTIPLIER,
+    moving_multiplier: float = MOVING_MULTIPLIER,
+) -> float:
     score = 0.0
     for vehicle in lane.vehicles:
-        weight = vehicle_density_weight(vehicle)
-        score += weight * (QUEUED_MULTIPLIER if Lane._is_queued(vehicle) else MOVING_MULTIPLIER)
+        weight = weights[vehicle.vehicle_type]
+        score += weight * (queued_multiplier if Lane._is_queued(vehicle) else moving_multiplier)
     return score
 
 
-def road_density_score(road: Road) -> float:
-    return sum(lane_density_score(lane) for lane in road.lanes)
+def road_density_score(
+    road: Road,
+    weights: Mapping[VehicleType, float] = DENSITY_WEIGHTS,
+    queued_multiplier: float = QUEUED_MULTIPLIER,
+    moving_multiplier: float = MOVING_MULTIPLIER,
+) -> float:
+    return sum(lane_density_score(lane, weights, queued_multiplier, moving_multiplier) for lane in road.lanes)
 
 
 def compute_intersection_density(intersection: Intersection) -> dict[str, dict]:

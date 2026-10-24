@@ -98,6 +98,7 @@ class OverMetrics:
     mean_green_s: float
     mean_queued: float        # vehicles queued on the links (excludes the backlog)
     first_spillback_s: float  # nan if no approach ever spilled back
+    safety_violations: int    # simulation/signal_audit.py, every step (should be 0)
 
 
 def over_metrics(result: TrialResult, warmup_s: float = WARMUP_S,
@@ -138,27 +139,36 @@ def over_metrics(result: TrialResult, warmup_s: float = WARMUP_S,
         mean_green_s=mean_or_nan(length for start, length in result.green_durations_s if start > warmup_s),
         mean_queued=mean_or_nan(s.queued for s in after),
         first_spillback_s=spilled[0] if spilled else float("nan"),
+        safety_violations=sum(result.safety_violations.values()),
     )
 
 
 def _spec(controller: str, seed: int, rate: float, duration_s: float, dt: float,
-          preemption: bool = True) -> TrialSpec:
+          preemption: bool = True, reaction_time_s: float = 0.0,
+          saturation_flow_vph: float | None = None) -> TrialSpec:
     return TrialSpec(controller=controller, seed=seed, spawn_rate_per_s=rate, duration_s=duration_s,
-                     dt=dt, preemption=preemption, entry_backlog=True, insert_at_speed=True)
+                     dt=dt, preemption=preemption, entry_backlog=True, insert_at_speed=True,
+                     reaction_time_s=reaction_time_s, saturation_flow_vph=saturation_flow_vph)
 
 
 def measure_capacity(seeds: list[int], duration_s: float, saturation_rate: float, jobs: int | None,
                      dt: float = 0.05, preemption: bool = True,
-                     controllers: tuple[str, ...] = CONTROLLERS) -> dict[str, list[OverMetrics]]:
-    specs = [_spec(c, s, saturation_rate, duration_s, dt, preemption) for c in controllers for s in seeds]
+                     controllers: tuple[str, ...] = CONTROLLERS,
+                     reaction_time_s: float = 0.0,
+                     saturation_flow_vph: float | None = None) -> dict[str, list[OverMetrics]]:
+    specs = [_spec(c, s, saturation_rate, duration_s, dt, preemption, reaction_time_s, saturation_flow_vph)
+             for c in controllers for s in seeds]
     results = iter(run_trials(specs, jobs=jobs))
     return {c: [over_metrics(next(results)) for _ in seeds] for c in controllers}
 
 
 def run_sweep(rates: list[float], seeds: list[int], duration_s: float, jobs: int | None,
               dt: float = 0.05, preemption: bool = True,
-              controllers: tuple[str, ...] = CONTROLLERS) -> list[dict[str, list[OverMetrics]]]:
-    specs = [_spec(c, s, rate, duration_s, dt, preemption) for rate in rates for c in controllers for s in seeds]
+              controllers: tuple[str, ...] = CONTROLLERS,
+              reaction_time_s: float = 0.0,
+              saturation_flow_vph: float | None = None) -> list[dict[str, list[OverMetrics]]]:
+    specs = [_spec(c, s, rate, duration_s, dt, preemption, reaction_time_s, saturation_flow_vph)
+             for rate in rates for c in controllers for s in seeds]
     results = iter(run_trials(specs, jobs=jobs))
     return [{c: [over_metrics(next(results)) for _ in seeds] for c in controllers} for _ in rates]
 
@@ -240,14 +250,20 @@ def format_report(capacity: dict[str, list[OverMetrics]], ratios: list[float], r
         "Mean ± 95% confidence interval over seeds; \"vs fixed\" = paired difference relative to fixed-time "
         "control, p = paired t-test. Demand is the realized arrival rate after the warm-up.",
     ]
+    runs = [m for c in controllers for m in capacity[c]] + [m for level in sweep for c in controllers for m in level[c]]
+    lines.append(f"Signal safety audit over all {len(runs)} runs: {sum(m.safety_violations for m in runs)} violations.")
     return "\n".join(lines)
 
 
-def write_csv(path: Path, ratios, rates, seeds, sweep) -> None:
+def write_csv(path: Path, ratios, rates, seeds, sweep, capacity=None, capacity_seeds=(),
+              saturation_rate=DEFAULT_SATURATION_RATE) -> None:
     names = [f.name for f in fields(OverMetrics)]
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["ratio", "spawn_rate_per_s", "seed", "controller", *names])
+        for c, runs in (capacity or {}).items():  # ratio "capacity": the flooded capacity runs
+            for seed, m in zip(capacity_seeds, runs):
+                writer.writerow(["capacity", saturation_rate, seed, c, *(round(getattr(m, n), 4) for n in names)])
         for ratio, rate, level in zip(ratios, rates, sweep):
             for c in level:
                 for seed, m in zip(seeds, level[c]):
@@ -267,6 +283,10 @@ def main(argv: list[str] | None = None) -> None:
                         help="arrivals/s per approach for the capacity runs (default: 1.5)")
     parser.add_argument("--controllers", type=parse_controllers, default=CONTROLLERS,
                         help="comma-separated, fixed first (default: fixed,adaptive,adaptive_hold)")
+    parser.add_argument("--reaction-time", type=float, default=0.0,
+                        help="driver reaction time in s (default 0, the paper's model; see scripts/kinematics_check.py)")
+    parser.add_argument("--saturation-flow", type=float, default=None,
+                        help="veh/h per approach for the Webster baseline (default: decision_engine/webster.py)")
     parser.add_argument("--no-preemption", action="store_true",
                         help="run without emergency preemption (see the note on emergency frequency above)")
     parser.add_argument("--jobs", type=int, default=None, help="parallel processes (default: all CPU cores)")
@@ -278,14 +298,19 @@ def main(argv: list[str] | None = None) -> None:
     capacity_seeds = list(range(101, 101 + args.capacity_seeds))  # kept apart from the sweep seeds
     seeds = list(range(1, args.seeds + 1))
     capacity = measure_capacity(capacity_seeds, args.duration, args.saturation_rate, args.jobs,
-                                preemption=preemption, controllers=args.controllers)
+                                preemption=preemption, controllers=args.controllers, reaction_time_s=args.reaction_time,
+                                saturation_flow_vph=args.saturation_flow)
     fixed_capacity_vph = statistics.mean(m.throughput_vph for m in capacity["fixed"])
     rates = [r * fixed_capacity_vph / (4 * 3600) for r in args.ratios]
-    sweep = run_sweep(rates, seeds, args.duration, args.jobs, preemption=preemption, controllers=args.controllers)
+    sweep = run_sweep(rates, seeds, args.duration, args.jobs, preemption=preemption, controllers=args.controllers,
+                      reaction_time_s=args.reaction_time, saturation_flow_vph=args.saturation_flow)
+    if args.reaction_time:
+        print(f"Driver reaction time: {args.reaction_time:g} s (calibrated kinematics)")
+        print()
     print(format_report(capacity, args.ratios, rates, sweep, args.duration, len(seeds),
                         len(capacity_seeds), args.saturation_rate, preemption))
     if args.csv:
-        write_csv(args.csv, args.ratios, rates, seeds, sweep)
+        write_csv(args.csv, args.ratios, rates, seeds, sweep, capacity, capacity_seeds, args.saturation_rate)
         print(f"\nPer-seed results written to {args.csv}", file=sys.stderr)
 
 

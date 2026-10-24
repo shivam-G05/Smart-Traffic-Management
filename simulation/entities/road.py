@@ -1,17 +1,15 @@
-import math
 import random
 from collections import deque
 
 from simulation.config import (
     INTERSECTION_EXIT_POS_M,
     LANES_PER_ROAD,
-    MIN_VEHICLE_GAP_M,
     SAFE_FOLLOWING_GAP_M,
     VEHICLE_PROFILES,
     RoadName,
     VehicleType,
 )
-from simulation.entities.lane import Lane
+from simulation.entities.lane import Lane, safe_following_speed
 from simulation.entities.traffic_light import TrafficLight
 from simulation.entities.vehicle import Vehicle
 
@@ -27,9 +25,11 @@ class Road:
         rng: random.Random | None = None,
         entry_backlog: bool = False,
         insert_at_speed: bool = False,
+        reaction_time_s: float = 0.0,
     ):
         self.name = name
-        self.lanes = [Lane(i) for i in range(LANES_PER_ROAD)]
+        self.reaction_time_s = reaction_time_s  # see lane.safe_following_speed
+        self.lanes = [Lane(i, reaction_time_s=reaction_time_s) for i in range(LANES_PER_ROAD)]
         self.light = TrafficLight()
         self.spawn_rate_per_s = spawn_rate_per_s
         self._spawn_accumulator = 0.0
@@ -106,9 +106,8 @@ class Road:
             # the leader brakes as hard as it can.
             leader = lane.vehicles[-1]
             gap = leader.position_m - leader.profile.length_m
-            leader_stopping_m = leader.speed_mps ** 2 / (2 * leader.profile.deceleration_mps2)
-            usable_gap = max(0.0, gap + leader_stopping_m - MIN_VEHICLE_GAP_M)
-            speed = min(speed, math.sqrt(2 * profile.deceleration_mps2 * usable_gap))
+            speed = min(speed, safe_following_speed(gap, leader.speed_mps, leader.profile.deceleration_mps2,
+                                                    profile.deceleration_mps2, self.reaction_time_s))
         vehicle.speed_mps = speed
 
     @property

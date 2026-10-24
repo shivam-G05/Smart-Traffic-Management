@@ -45,26 +45,38 @@ class Detection:
 
 
 class HaarVehicleDetector:
-    def __init__(self, cascade_path=CASCADE_PATH):
+    def __init__(
+        self,
+        cascade_path=CASCADE_PATH,
+        upscale_factor: float = UPSCALE_FACTOR,
+        equalize: bool = True,
+        min_neighbors: int = DETECT_MIN_NEIGHBORS,
+    ):
+        # The keyword arguments exist for the ablation in
+        # scripts/vision_eval.py; the live pipeline uses the defaults.
         self._cascade = cv2.CascadeClassifier(str(cascade_path))
         if self._cascade.empty():
             raise RuntimeError(f"Failed to load Haar cascade from {cascade_path}")
+        self.upscale_factor = upscale_factor
+        self.equalize = equalize
+        self.min_neighbors = min_neighbors
 
     def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        gray = cv2.equalizeHist(gray)
+        if self.equalize:
+            gray = cv2.equalizeHist(gray)
 
         # The cascade's own training window (20x20) is close to or larger
         # than our rendered vehicles at native resolution, so it can barely
         # ever fire. Upscaling before detection — then mapping boxes back
         # down — gives it a realistic chance without inflating frame/JPEG
         # size for anything else that consumes the raw frame.
-        upscaled = cv2.resize(gray, None, fx=UPSCALE_FACTOR, fy=UPSCALE_FACTOR)
+        upscaled = cv2.resize(gray, None, fx=self.upscale_factor, fy=self.upscale_factor)
 
         rects, _reject_levels, level_weights = self._cascade.detectMultiScale3(
             upscaled,
             scaleFactor=DETECT_SCALE_FACTOR,
-            minNeighbors=DETECT_MIN_NEIGHBORS,
+            minNeighbors=self.min_neighbors,
             minSize=DETECT_MIN_SIZE_PX,
             outputRejectLevels=True,
         )
@@ -78,10 +90,10 @@ class HaarVehicleDetector:
             confidence = float(min(1.0, max(0.0, weight / 2.0)))
             detections.append(
                 Detection(
-                    int(x / UPSCALE_FACTOR),
-                    int(y / UPSCALE_FACTOR),
-                    int(w / UPSCALE_FACTOR),
-                    int(h / UPSCALE_FACTOR),
+                    int(x / self.upscale_factor),
+                    int(y / self.upscale_factor),
+                    int(w / self.upscale_factor),
+                    int(h / self.upscale_factor),
                     confidence,
                 )
             )

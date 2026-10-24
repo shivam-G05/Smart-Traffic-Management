@@ -102,3 +102,19 @@ def test_kalman_filter_converges_toward_constant_velocity_motion():
     kf.predict(dt=1.0)
     predicted_x, _ = kf.center
     assert abs(predicted_x - (true_x + 5.0)) < 2.0
+
+
+def test_single_stage_tracker_ignores_low_confidence_detections():
+    two_stage, single = ByteTracker(min_hits=1), ByteTracker(min_hits=1, two_stage=False)
+    strong, weak = Detection(10, 10, 10, 10, 0.9), Detection(11, 10, 10, 10, 0.01)
+    for tracker in (two_stage, single):
+        tracker.update([strong], dt=0.5)
+    assert two_stage.update([weak], dt=0.5)          # weak detection sustains the track
+    assert not single.update([weak], dt=0.5)         # dropped: no match this frame
+
+
+def test_tracker_without_motion_model_matches_against_the_last_box():
+    tracker = ByteTracker(min_hits=1, predict_motion=False)
+    tracker.update([Detection(10, 10, 10, 10, 0.9)], dt=0.5)
+    (track,) = tracker.update([Detection(12, 10, 10, 10, 0.9)], dt=0.5)
+    assert track.bbox == (12, 10, 10, 10)

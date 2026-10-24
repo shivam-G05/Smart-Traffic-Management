@@ -12,11 +12,36 @@ from simulation.config import (
 from simulation.entities.vehicle import Vehicle
 
 
+def safe_following_speed(
+    gap_m: float,
+    leader_speed_mps: float,
+    leader_decel_mps2: float,
+    own_decel_mps2: float,
+    reaction_time_s: float = 0.0,
+) -> float:
+    """Fastest speed from which a follower can still stop MIN_VEHICLE_GAP_M
+    behind its leader if the leader brakes as hard as it can, after the
+    follower's own reaction time (Krauss's safe speed; Gipps-type).
+
+    reaction_time_s = 0 (the default, used by the dashboard and the paper's
+    main experiments) gives the original rule exactly. Without a reaction
+    time a follower may trail by only the 2 m standstill gap at any speed,
+    which makes queues discharge far faster than at real junctions
+    (scripts/kinematics_check.py measures ~0.5 s headways for cars against
+    the ~1.9 s of the Highway Capacity Manual); a reaction time of about a
+    second restores realistic headways.
+    """
+    b, tau = own_decel_mps2, reaction_time_s
+    reach = b * leader_speed_mps ** 2 / leader_decel_mps2 + 2 * b * (gap_m - MIN_VEHICLE_GAP_M)
+    return -b * tau + math.sqrt((b * tau) ** 2 + max(0.0, reach))
+
+
 class Lane:
     """A single queue of vehicles travelling in order along one lane of a road."""
 
-    def __init__(self, lane_index: int):
+    def __init__(self, lane_index: int, reaction_time_s: float = 0.0):
         self.lane_index = lane_index
+        self.reaction_time_s = reaction_time_s
         self.vehicles: list[Vehicle] = []  # ordered leader-first
         self.total_exited: int = 0
         self.total_wait_time_s: float = 0.0
@@ -62,9 +87,8 @@ class Lane:
             # leader brakes as hard as it can right now. The old rule only
             # reacted inside SAFE_FOLLOWING_GAP_M (8m), but a car at 14 m/s
             # needs ~22m to stop — so followers ran into and through queues.
-            leader_stopping_m = leader.speed_mps ** 2 / (2 * leader.profile.deceleration_mps2)
-            usable_gap = max(0.0, gap + leader_stopping_m - MIN_VEHICLE_GAP_M)
-            safe_speed = math.sqrt(2 * profile.deceleration_mps2 * usable_gap)
+            safe_speed = safe_following_speed(gap, leader.speed_mps, leader.profile.deceleration_mps2,
+                                              profile.deceleration_mps2, self.reaction_time_s)
             target_speed = min(target_speed, safe_speed)
             if gap < SAFE_FOLLOWING_GAP_M:
                 target_speed = min(target_speed, leader.speed_mps)

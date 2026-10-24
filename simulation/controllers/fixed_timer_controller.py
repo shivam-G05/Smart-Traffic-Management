@@ -55,10 +55,15 @@ class FixedTimerController(SignalControllerBase):
     baseline for the adaptive controller introduced in a later milestone.
     """
 
-    def __init__(self):
+    def __init__(self, green_s: float = FIXED_GREEN_DURATION_S):
+        # green_s other than the 20 s default exists for the Webster-timed
+        # baseline in the experiments (decision_engine/webster.py), which
+        # sets a demand-specific green; the dashboard always uses 20 s.
         self.phase = Phase.NS_GREEN
         self._elapsed_in_phase = 0.0
         self._apply_phase_lights_pending = True
+        self.green_s = green_s
+        self._durations = {**_PHASE_DURATIONS, Phase.NS_GREEN: green_s, Phase.EW_GREEN: green_s}
 
     def update(self, intersection: Intersection, dt: float) -> None:
         if self._apply_phase_lights_pending:
@@ -66,7 +71,7 @@ class FixedTimerController(SignalControllerBase):
             self._apply_phase_lights_pending = False
 
         self._elapsed_in_phase += dt
-        if self._elapsed_in_phase >= _PHASE_DURATIONS[self.phase]:
+        if self._elapsed_in_phase >= self._durations[self.phase]:
             self.phase = _NEXT_PHASE[self.phase]
             self._elapsed_in_phase = 0.0
             self._apply_lights(intersection)
@@ -77,6 +82,11 @@ class FixedTimerController(SignalControllerBase):
 
     def current_phase_name(self) -> str:
         return self.phase.name
+
+    def describe(self) -> str:
+        if self.green_s == FIXED_GREEN_DURATION_S:
+            return "FixedTimerController"
+        return f"FixedTimerController(green {self.green_s:g} s)"
 
     def resync(self, intersection: Intersection) -> None:
         self._apply_lights(intersection)

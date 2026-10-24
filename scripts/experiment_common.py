@@ -25,13 +25,22 @@ from scipy import stats  # noqa: E402
 from analytics.config import CONGESTION_HIGH_MIN  # noqa: E402
 from app.core.controller_factory import build_controller  # noqa: E402
 from decision_engine.density import road_density_score  # noqa: E402
+from decision_engine.sensing import SensorModel  # noqa: E402
+from decision_engine.webster import webster_green_s  # noqa: E402
+from simulation.signal_audit import SignalAudit  # noqa: E402
 from simulation.config import LightState, RoadName  # noqa: E402
 from simulation.engine import SimulationEngine  # noqa: E402
 
 
-CONTROLLERS = ("fixed", "adaptive", "adaptive_hold")
+# Every controller the experiments compare, baseline first. See
+# backend/app/core/controller_factory.py and decision_engine/baselines.py.
+CONTROLLERS = ("fixed", "webster", "actuated", "max_pressure", "density_levels", "adaptive", "adaptive_hold")
 CONTROLLER_LABELS = {
-    "fixed": "Fixed",
+    "fixed": "Fixed (20 s)",
+    "webster": "Webster fixed",
+    "actuated": "Actuated",
+    "max_pressure": "Max-pressure",
+    "density_levels": "Density levels",
     "adaptive": "Adaptive",
     "adaptive_hold": "Adaptive + hold",
 }
@@ -59,6 +68,24 @@ class TrialSpec:
     preemption: bool = True
     entry_backlog: bool = False  # see Road: keep blocked arrivals instead of dropping them
     insert_at_speed: bool = False  # see Road: enter at a safe speed instead of at rest
+    reaction_time_s: float = 0.0  # see lane.safe_following_speed; 1.6 s matches field headways
+    # Saturation flow per approach that the Webster baseline plans with;
+    # None = decision_engine/webster.py's value for the default model.
+    saturation_flow_vph: float | None = None
+    # SensorModel fields as (name, value) pairs; empty = exact vehicle
+    # states (the default). See decision_engine/sensing.py.
+    sensor: tuple = ()
+    # Extra constructor arguments for the controller, as (name, value)
+    # pairs — used by the ablation experiments.
+    options: tuple = ()
+
+    def controller_options(self) -> dict:
+        options = dict(self.options)
+        if self.controller == "webster" and "green_s" not in options:
+            # Webster's plan is tuned to the mean demand of this very run.
+            options["green_s"] = (webster_green_s(self.spawn_rate_per_s, self.saturation_flow_vph)
+                                  if self.saturation_flow_vph else webster_green_s(self.spawn_rate_per_s))
+        return options
 
 
 @dataclass(frozen=True)
@@ -91,15 +118,28 @@ class TrialResult:
     samples: list[Sample]
     backlog_waits_s: list[float]  # vehicles still waiting to enter at the end
     green_durations_s: list[tuple[float, float]]  # (start time, length) of every completed green, both directions
+    # simulation/signal_audit.py checked on every step: conflicting greens,
+    # skipped yellows, short yellows, short all-reds. Should always be empty.
+    safety_violations: dict[str, int]
+    preemptions: int             # emergency preemptions started
 
 
 def run_trial(spec: TrialSpec) -> TrialResult:
+    preemptions = 0
+
+    def on_event(_sim_time, event_type, _phase, _road):
+        nonlocal preemptions
+        preemptions += event_type == "EMERGENCY_PREEMPTION_START"
+
     engine = SimulationEngine(
-        controller=build_controller(spec.controller, preemption=spec.preemption),
+        controller=build_controller(spec.controller, on_event=on_event, preemption=spec.preemption,
+                                    sensor=SensorModel(**dict(spec.sensor), seed=spec.seed) if spec.sensor else None,
+                                    **spec.controller_options()),
         seed=spec.seed,
         base_spawn_rate_per_s=spec.spawn_rate_per_s,
         entry_backlog=spec.entry_backlog,
         insert_at_speed=spec.insert_at_speed,
+        reaction_time_s=spec.reaction_time_s,
     )
     roads = list(engine.intersection.roads.values())
     lanes = [lane for road in roads for lane in road.lanes]
@@ -114,6 +154,7 @@ def run_trial(spec: TrialSpec) -> TrialResult:
     group_lights = [engine.intersection.roads[RoadName.NORTH].light, engine.intersection.roads[RoadName.EAST].light]
     green_since: list[float | None] = [None, None]
     greens: list[tuple[float, float]] = []
+    audit = SignalAudit(engine.intersection, spec.dt)
 
     def record(vehicle, entry_s, exit_s):
         vehicles.append(
@@ -129,6 +170,7 @@ def run_trial(spec: TrialSpec) -> TrialResult:
 
     for step in range(1, steps + 1):
         engine.tick(spec.dt)
+        audit.observe()
         t = step * spec.dt
 
         for i, light in enumerate(group_lights):
@@ -172,6 +214,8 @@ def run_trial(spec: TrialSpec) -> TrialResult:
         samples=samples,
         backlog_waits_s=backlog_waits,
         green_durations_s=greens,
+        safety_violations=dict(audit.counts),
+        preemptions=preemptions,
     )
 
 

@@ -1,0 +1,221 @@
+level,variant,seed,mean_delay_s,p95_delay_s,mean_green_s,throughput_vph
+medium,Adaptive (reference),1,4.2865,13.2825,9.2392,1750.34
+medium,Adaptive (reference),2,4.7558,14.25,9.4988,1686.21
+medium,Adaptive (reference),3,4.6579,14.8425,9.75,1735.86
+medium,Adaptive (reference),4,4.5388,14.06,9.4558,1746.21
+medium,Adaptive (reference),5,4.3633,13.19,9.1277,1698.62
+medium,Adaptive (reference),6,4.6132,13.83,10.0077,1690.34
+medium,Adaptive (reference),7,4.76,15.29,9.5547,1692.41
+medium,Adaptive (reference),8,4.4055,13.4475,9.4949,1727.59
+medium,Adaptive (reference),9,4.8656,14.265,9.574,1677.93
+medium,Adaptive (reference),10,4.7847,15.555,9.7286,1731.72
+medium,Unweighted count (weights and multipliers = 1),1,5.6272,17.65,13.6742,1723.45
+medium,Unweighted count (weights and multipliers = 1),2,5.7298,17.9325,14.4785,1698.62
+medium,Unweighted count (weights and multipliers = 1),3,5.863,19.2925,14.4574,1729.66
+medium,Unweighted count (weights and multipliers = 1),4,5.8035,18.725,14.3303,1744.14
+medium,Unweighted count (weights and multipliers = 1),5,5.9197,18.635,14.1805,1692.41
+medium,Unweighted count (weights and multipliers = 1),6,5.6859,18.185,14.55,1690.34
+medium,Unweighted count (weights and multipliers = 1),7,5.5617,18.68,14.2851,1702.76
+medium,Unweighted count (weights and multipliers = 1),8,5.7362,18.3975,14.4796,1723.45
+medium,Unweighted count (weights and multipliers = 1),9,5.2279,17.485,13.3904,1692.41
+medium,Unweighted count (weights and multipliers = 1),10,5.3157,17.15,13.3273,1735.86
+medium,No class weights (all classes = 1),1,4.7096,13.4,8.9895,1773.1
+medium,No class weights (all classes = 1),2,4.1009,12.95,8.9241,1696.55
+medium,No class weights (all classes = 1),3,4.5631,13.45,9.1256,1731.72
+medium,No class weights (all classes = 1),4,4.4217,13.35,9.29,1742.07
+medium,No class weights (all classes = 1),5,4.3115,12.96,8.6728,1684.14
+medium,No class weights (all classes = 1),6,4.3436,12.9875,8.9808,1692.41
+medium,No class weights (all classes = 1),7,4.5478,13.15,8.729,1717.24
+medium,No class weights (all classes = 1),8,4.1472,13.0,8.7452,1762.76
+medium,No class weights (all classes = 1),9,4.5084,13.2,9.0365,1711.03
+medium,No class weights (all classes = 1),10,4.5761,13.55,8.959,1737.93
+medium,No queued/moving distinction (multipliers = 1),1,6.1336,21.33,14.6777,1777.24
+medium,No queued/moving distinction (multipliers = 1),2,6.1707,20.55,15.3557,1700.69
+medium,No queued/moving distinction (multipliers = 1),3,6.2848,21.0775,14.342,1729.66
+medium,No queued/moving distinction (multipliers = 1),4,6.6839,23.515,15.5409,1744.14
+medium,No queued/moving distinction (multipliers = 1),5,5.8803,20.85,15.5845,1680.0
+medium,No queued/moving distinction (multipliers = 1),6,6.1045,21.55,15.3551,1694.48
+medium,No queued/moving distinction (multipliers = 1),7,6.2809,20.93,15.0275,1711.03
+medium,No queued/moving distinction (multipliers = 1),8,6.527,21.625,14.9973,1744.14
+medium,No queued/moving distinction (multipliers = 1),9,6.4052,20.965,15.6153,1698.62
+medium,No queued/moving distinction (multipliers = 1),10,5.7163,19.6975,14.6603,1733.79
+medium,theta = 1.0,1,4.4281,13.5875,9.4918,1729.66
+medium,theta = 1.0,2,4.7524,13.95,10.0975,1717.24
+medium,theta = 1.0,3,4.8054,16.2325,9.8383,1735.86
+medium,theta = 1.0,4,4.8687,16.13,10.5395,1746.21
+medium,theta = 1.0,5,4.3896,13.615,9.6488,1704.83
+medium,theta = 1.0,6,4.6472,16.28,10.4029,1684.14
+medium,theta = 1.0,7,4.5354,15.1,9.9657,1713.1
+medium,theta = 1.0,8,4.7448,13.9775,9.731,1740.0
+medium,theta = 1.0,9,4.5661,14.63,10.026,1653.1
+medium,theta = 1.0,10,4.8825,16.16,10.4576,1729.66
+medium,theta = 1.5,1,4.3408,12.7575,8.4717,1756.55
+medium,theta = 1.5,2,4.3539,13.05,8.8827,1706.9
+medium,theta = 1.5,3,4.3804,13.085,8.6423,1748.28
+medium,theta = 1.5,4,4.5644,13.45,8.7658,1746.21
+medium,theta = 1.5,5,4.1476,12.505,8.4909,1688.28
+medium,theta = 1.5,6,4.3685,13.38,9.2137,1690.34
+medium,theta = 1.5,7,4.3136,12.95,8.7114,1708.97
+medium,theta = 1.5,8,4.1379,12.8275,8.5601,1729.66
+medium,theta = 1.5,9,4.3964,13.1,8.9429,1711.03
+medium,theta = 1.5,10,4.7747,14.965,9.4434,1735.86
+medium,"+ discharge hold, 10 m zone",1,4.3902,13.705,9.6329,1773.1
+medium,"+ discharge hold, 10 m zone",2,4.9455,15.2575,10.2679,1711.03
+medium,"+ discharge hold, 10 m zone",3,4.451,13.85,9.2235,1737.93
+medium,"+ discharge hold, 10 m zone",4,4.6981,14.6925,9.6614,1725.52
+medium,"+ discharge hold, 10 m zone",5,4.4289,13.31,9.2073,1684.14
+medium,"+ discharge hold, 10 m zone",6,4.8678,14.84,10.1344,1669.66
+medium,"+ discharge hold, 10 m zone",7,4.7959,13.8,9.5031,1704.83
+medium,"+ discharge hold, 10 m zone",8,4.516,13.825,9.7075,1742.07
+medium,"+ discharge hold, 10 m zone",9,4.3455,13.475,9.5146,1692.41
+medium,"+ discharge hold, 10 m zone",10,4.7647,14.965,9.7238,1731.72
+medium,"+ discharge hold, 20 m zone",1,4.5639,14.1,9.8569,1752.41
+medium,"+ discharge hold, 20 m zone",2,4.7559,14.7475,9.9732,1696.55
+medium,"+ discharge hold, 20 m zone",3,4.4038,13.5,9.5921,1740.0
+medium,"+ discharge hold, 20 m zone",4,4.9359,16.135,9.7853,1744.14
+medium,"+ discharge hold, 20 m zone",5,4.4107,13.415,9.4824,1686.21
+medium,"+ discharge hold, 20 m zone",6,4.5577,14.97,10.25,1690.34
+medium,"+ discharge hold, 20 m zone",7,4.752,14.05,9.8116,1696.55
+medium,"+ discharge hold, 20 m zone",8,4.7654,14.345,9.9137,1748.28
+medium,"+ discharge hold, 20 m zone",9,4.5617,14.2,9.6798,1677.93
+medium,"+ discharge hold, 20 m zone",10,4.9328,15.7475,9.9646,1737.93
+medium,"+ discharge hold, 30 m zone",1,4.7843,14.615,10.3529,1766.9
+medium,"+ discharge hold, 30 m zone",2,4.7053,14.5,10.5788,1711.03
+medium,"+ discharge hold, 30 m zone",3,4.5491,15.035,10.5564,1733.79
+medium,"+ discharge hold, 30 m zone",4,4.7791,15.66,10.8272,1740.0
+medium,"+ discharge hold, 30 m zone",5,4.344,14.15,10.2119,1675.86
+medium,"+ discharge hold, 30 m zone",6,4.8411,16.15,10.5735,1686.21
+medium,"+ discharge hold, 30 m zone",7,4.5919,14.88,10.3488,1700.69
+medium,"+ discharge hold, 30 m zone",8,4.5207,14.2,10.0423,1727.59
+medium,"+ discharge hold, 30 m zone",9,4.4462,15.035,10.8659,1692.41
+medium,"+ discharge hold, 30 m zone",10,4.5527,14.5,10.2775,1737.93
+medium,Preemption off,1,4.0169,13.3,9.0386,1740.0
+medium,Preemption off,2,4.2369,13.05,9.3496,1744.14
+medium,Preemption off,3,4.4157,13.15,9.1996,1752.41
+medium,Preemption off,4,4.1824,13.0,8.9786,1764.83
+medium,Preemption off,5,4.4192,13.4175,9.2313,1659.31
+medium,Preemption off,6,4.1089,13.1,9.1985,1688.28
+medium,Preemption off,7,4.246,13.095,9.0784,1702.76
+medium,Preemption off,8,4.1607,13.0225,9.0992,1744.14
+medium,Preemption off,9,4.3286,12.96,9.1348,1692.41
+medium,Preemption off,10,4.3172,13.3775,9.5256,1731.72
+medium,Fixed 20 s (for reference),1,6.8917,23.0,19.5952,1740.0
+medium,Fixed 20 s (for reference),2,7.3807,23.465,19.3815,1702.76
+medium,Fixed 20 s (for reference),3,7.3072,23.95,19.6685,1742.07
+medium,Fixed 20 s (for reference),4,6.7539,22.965,19.1399,1752.41
+medium,Fixed 20 s (for reference),5,7.1991,23.455,20.2831,1704.83
+medium,Fixed 20 s (for reference),6,6.9604,23.275,18.4305,1694.48
+medium,Fixed 20 s (for reference),7,7.1789,23.95,20.3211,1711.03
+medium,Fixed 20 s (for reference),8,7.7222,24.1225,20.2859,1746.21
+medium,Fixed 20 s (for reference),9,7.2555,23.575,19.5486,1715.17
+medium,Fixed 20 s (for reference),10,7.3686,23.4425,19.0047,1735.86
+high,Adaptive (reference),1,4.7173,13.96,9.2727,2513.79
+high,Adaptive (reference),2,4.8141,14.7875,9.2896,2509.66
+high,Adaptive (reference),3,4.7024,14.235,9.4062,2544.83
+high,Adaptive (reference),4,4.7264,14.965,9.7127,2600.69
+high,Adaptive (reference),5,4.6798,13.5775,9.3223,2491.03
+high,Adaptive (reference),6,4.8652,17.295,9.9661,2538.62
+high,Adaptive (reference),7,4.4596,13.49,9.1954,2596.55
+high,Adaptive (reference),8,4.8454,15.18,9.5718,2553.1
+high,Adaptive (reference),9,4.7091,13.71,9.2011,2544.83
+high,Adaptive (reference),10,5.1295,17.15,9.9343,2561.38
+high,Unweighted count (weights and multipliers = 1),1,5.8441,18.72,14.1526,2577.93
+high,Unweighted count (weights and multipliers = 1),2,6.3122,20.025,14.6772,2557.24
+high,Unweighted count (weights and multipliers = 1),3,5.6842,18.4,13.8214,2528.28
+high,Unweighted count (weights and multipliers = 1),4,6.3106,20.9,14.0311,2637.93
+high,Unweighted count (weights and multipliers = 1),5,5.7876,18.2075,14.0247,2530.34
+high,Unweighted count (weights and multipliers = 1),6,6.3752,20.75,15.327,2540.69
+high,Unweighted count (weights and multipliers = 1),7,6.3467,20.3,14.5355,2474.48
+high,Unweighted count (weights and multipliers = 1),8,5.9226,20.2475,14.0347,2557.24
+high,Unweighted count (weights and multipliers = 1),9,5.8599,18.795,14.1941,2530.34
+high,Unweighted count (weights and multipliers = 1),10,5.8935,18.5125,14.0132,2526.21
+high,No class weights (all classes = 1),1,4.6887,13.35,8.9097,2582.07
+high,No class weights (all classes = 1),2,4.5945,13.3,9.0169,2507.59
+high,No class weights (all classes = 1),3,4.204,12.8725,8.6313,2507.59
+high,No class weights (all classes = 1),4,4.3699,13.235,9.0126,2600.69
+high,No class weights (all classes = 1),5,4.5929,13.4,9.0586,2540.69
+high,No class weights (all classes = 1),6,4.7236,14.8625,9.3396,2534.48
+high,No class weights (all classes = 1),7,4.5222,13.45,9.0023,2522.07
+high,No class weights (all classes = 1),8,4.9383,16.785,9.578,2532.41
+high,No class weights (all classes = 1),9,4.7017,13.85,9.1981,2515.86
+high,No class weights (all classes = 1),10,4.8018,15.15,9.5807,2561.38
+high,No queued/moving distinction (multipliers = 1),1,6.3688,20.9725,14.9833,2598.62
+high,No queued/moving distinction (multipliers = 1),2,5.9392,19.55,14.5387,2561.38
+high,No queued/moving distinction (multipliers = 1),3,6.278,20.4875,14.9144,2567.59
+high,No queued/moving distinction (multipliers = 1),4,6.5793,22.24,15.5144,2573.79
+high,No queued/moving distinction (multipliers = 1),5,6.3645,21.0,14.9363,2476.55
+high,No queued/moving distinction (multipliers = 1),6,6.3254,21.695,15.1994,2577.93
+high,No queued/moving distinction (multipliers = 1),7,6.5136,21.6,14.9167,2534.48
+high,No queued/moving distinction (multipliers = 1),8,6.1433,20.0725,14.4172,2509.66
+high,No queued/moving distinction (multipliers = 1),9,6.6363,21.8825,14.9989,2559.31
+high,No queued/moving distinction (multipliers = 1),10,6.2251,20.585,15.2848,2559.31
+high,theta = 1.0,1,4.693,14.6075,9.9145,2532.41
+high,theta = 1.0,2,4.4818,13.4375,9.4777,2606.9
+high,theta = 1.0,3,4.7757,14.6,9.7,2493.1
+high,theta = 1.0,4,4.8562,14.6,9.8117,2584.14
+high,theta = 1.0,5,4.6449,15.12,10.1467,2538.62
+high,theta = 1.0,6,4.583,14.26,9.6213,2540.69
+high,theta = 1.0,7,4.8716,15.35,9.8738,2517.93
+high,theta = 1.0,8,5.0448,16.14,9.7788,2538.62
+high,theta = 1.0,9,4.5551,14.5,9.7238,2524.14
+high,theta = 1.0,10,4.9977,15.7775,9.6988,2569.66
+high,theta = 1.5,1,4.7386,13.97,8.9007,2548.97
+high,theta = 1.5,2,4.3584,13.15,8.5478,2557.24
+high,theta = 1.5,3,4.2449,12.9,8.7607,2482.76
+high,theta = 1.5,4,4.4178,13.7,9.0375,2577.93
+high,theta = 1.5,5,4.7269,13.45,9.012,2517.93
+high,theta = 1.5,6,4.3936,13.3,8.6824,2517.93
+high,theta = 1.5,7,4.7714,14.16,9.0652,2509.66
+high,theta = 1.5,8,4.7288,13.5,8.8672,2540.69
+high,theta = 1.5,9,4.7196,13.5,8.931,2493.1
+high,theta = 1.5,10,4.5815,13.65,9.0337,2517.93
+high,"+ discharge hold, 10 m zone",1,4.942,14.5575,9.7336,2573.79
+high,"+ discharge hold, 10 m zone",2,4.5655,13.55,9.1416,2600.69
+high,"+ discharge hold, 10 m zone",3,4.4008,13.4,9.3953,2548.97
+high,"+ discharge hold, 10 m zone",4,4.6499,14.24,9.7591,2594.48
+high,"+ discharge hold, 10 m zone",5,4.933,15.15,9.6382,2538.62
+high,"+ discharge hold, 10 m zone",6,5.4064,18.805,10.0118,2580.0
+high,"+ discharge hold, 10 m zone",7,4.698,13.8825,9.4984,2468.28
+high,"+ discharge hold, 10 m zone",8,5.0087,15.6,10.1149,2561.38
+high,"+ discharge hold, 10 m zone",9,4.8651,14.3125,9.5815,2571.72
+high,"+ discharge hold, 10 m zone",10,5.3863,19.1025,10.2595,2586.21
+high,"+ discharge hold, 20 m zone",1,4.6296,13.55,9.6012,2526.21
+high,"+ discharge hold, 20 m zone",2,4.7608,14.35,9.6213,2534.48
+high,"+ discharge hold, 20 m zone",3,4.853,13.9625,9.2608,2544.83
+high,"+ discharge hold, 20 m zone",4,5.158,18.05,10.4392,2642.07
+high,"+ discharge hold, 20 m zone",5,4.8103,15.15,10.2281,2507.59
+high,"+ discharge hold, 20 m zone",6,5.07,18.2375,10.55,2536.55
+high,"+ discharge hold, 20 m zone",7,4.589,14.6,10.0167,2511.72
+high,"+ discharge hold, 20 m zone",8,4.7893,15.86,10.1182,2557.24
+high,"+ discharge hold, 20 m zone",9,4.8156,14.2575,9.7708,2571.72
+high,"+ discharge hold, 20 m zone",10,5.2191,17.1375,10.4996,2571.72
+high,"+ discharge hold, 30 m zone",1,4.7961,15.45,10.8776,2559.31
+high,"+ discharge hold, 30 m zone",2,4.7309,15.2575,10.6462,2534.48
+high,"+ discharge hold, 30 m zone",3,4.6555,14.385,10.495,2520.0
+high,"+ discharge hold, 30 m zone",4,5.5369,20.025,11.7792,2600.69
+high,"+ discharge hold, 30 m zone",5,4.7091,15.79,10.4466,2536.55
+high,"+ discharge hold, 30 m zone",6,4.9792,16.38,10.8435,2598.62
+high,"+ discharge hold, 30 m zone",7,4.8194,15.395,10.8254,2482.76
+high,"+ discharge hold, 30 m zone",8,5.1406,17.71,10.7483,2540.69
+high,"+ discharge hold, 30 m zone",9,5.0427,16.5975,11.0602,2528.28
+high,"+ discharge hold, 30 m zone",10,4.9708,16.7475,10.878,2561.38
+high,Preemption off,1,4.3071,12.95,8.8698,2536.55
+high,Preemption off,2,4.3028,13.05,8.9312,2499.31
+high,Preemption off,3,4.1117,12.65,8.8231,2546.9
+high,Preemption off,4,4.1666,13.25,8.9812,2611.03
+high,Preemption off,5,4.2574,12.75,8.5145,2520.0
+high,Preemption off,6,4.3395,13.15,8.7841,2511.72
+high,Preemption off,7,4.2851,13.05,9.0333,2503.45
+high,Preemption off,8,4.1974,12.73,8.8347,2505.52
+high,Preemption off,9,4.1641,12.75,8.8672,2569.66
+high,Preemption off,10,4.0915,12.85,8.9153,2557.24
+high,Fixed 20 s (for reference),1,7.2034,23.35,19.9903,2555.17
+high,Fixed 20 s (for reference),2,7.1933,23.65,19.687,2507.59
+high,Fixed 20 s (for reference),3,7.5098,23.915,19.6082,2561.38
+high,Fixed 20 s (for reference),4,7.25,23.675,19.1831,2575.86
+high,Fixed 20 s (for reference),5,7.9112,24.45,19.7632,2515.86
+high,Fixed 20 s (for reference),6,7.1533,22.7875,18.0846,2567.59
+high,Fixed 20 s (for reference),7,7.176,23.265,19.916,2515.86
+high,Fixed 20 s (for reference),8,7.1358,23.4825,17.913,2548.97
+high,Fixed 20 s (for reference),9,7.907,23.715,19.1149,2580.0
+high,Fixed 20 s (for reference),10,7.1939,23.695,20.0556,2553.1

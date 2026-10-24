@@ -17,6 +17,7 @@ class Intersection:
         base_spawn_rate_per_s: float = BASE_SPAWN_RATE_PER_S,
         entry_backlog: bool = False,
         insert_at_speed: bool = False,
+        reaction_time_s: float = 0.0,
     ):
         # Defaults to a fresh, unseeded Random() rather than the bare
         # `random` module — Milestone 9 needs a *shared* generator instance
@@ -36,6 +37,7 @@ class Intersection:
                 rng=self._rng,
                 entry_backlog=entry_backlog,
                 insert_at_speed=insert_at_speed,
+                reaction_time_s=reaction_time_s,
             )
             for name in RoadName
         }

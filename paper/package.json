@@ -1,0 +1,11 @@
+{
+  "name": "smart-traffic-paper",
+  "private": true,
+  "description": "Builds the revised AISUMMIT-2026 manuscript and response document (Word) from the experiment results.",
+  "scripts": {
+    "build": "node build_paper.js && node build_response.js"
+  },
+  "dependencies": {
+    "docx": "9.0.2"
+  }
+}

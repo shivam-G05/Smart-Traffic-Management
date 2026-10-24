@@ -119,3 +119,10 @@ def test_analyze_road_on_empty_road_has_no_ground_truth(detector):
     # (the Haar cascade's known noise, see vision/detector.py) — the
     # field just needs to be a sane non-negative count, not necessarily 0.
     assert result["unique_vehicles_tracked"] >= 0
+
+
+def test_detector_ablation_switches_change_the_preprocessing():
+    detector = HaarVehicleDetector(upscale_factor=1, equalize=False, min_neighbors=4)
+    assert (detector.upscale_factor, detector.equalize, detector.min_neighbors) == (1, False, 4)
+    frame = np.zeros((240, 200, 3), dtype=np.uint8)
+    assert detector.detect(frame) == []

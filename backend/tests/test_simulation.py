@@ -150,3 +150,32 @@ def test_engine_state_serializes_all_roads():
     state = engine.to_state()
     assert set(state["roads"].keys()) == {r.value for r in RoadName}
     assert "active_phase" in state
+
+
+def test_safe_speed_without_reaction_time_is_the_original_rule():
+    from simulation.entities.lane import safe_following_speed
+
+    for gap, v_lead in [(30.0, 10.0), (5.0, 0.0), (1.0, 3.0), (60.0, 14.0)]:
+        stopping = v_lead ** 2 / (2 * 4.5)
+        original = (2 * 4.5 * max(0.0, gap + stopping - 2.0)) ** 0.5
+        assert safe_following_speed(gap, v_lead, 4.5, 4.5) == pytest.approx(original)
+
+
+def test_reaction_time_lowers_safe_speed_and_lengthens_following_gaps():
+    from simulation.entities.lane import safe_following_speed
+
+    assert safe_following_speed(20.0, 10.0, 4.5, 4.5, reaction_time_s=1.6) < safe_following_speed(20.0, 10.0, 4.5, 4.5)
+    # In steady following at equal speed v the gap settles at s0 + tau * v.
+    v, tau = 12.0, 1.6
+    assert safe_following_speed(2.0 + tau * v, v, 4.5, 4.5, reaction_time_s=tau) == pytest.approx(v)
+
+
+def test_reaction_time_still_never_lets_vehicles_overlap():
+    engine = SimulationEngine(seed=9, base_spawn_rate_per_s=0.6, entry_backlog=True, insert_at_speed=True,
+                              reaction_time_s=1.6)
+    for _ in range(4000):
+        engine.tick(0.05)
+        for road in engine.intersection.roads.values():
+            for lane in road.lanes:
+                for leader, follower in zip(lane.vehicles, lane.vehicles[1:]):
+                    assert leader.position_m - leader.profile.length_m - follower.position_m >= 2.0 - 1e-6

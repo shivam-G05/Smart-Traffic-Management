@@ -23,3 +23,8 @@ Thumbs.db
 
 # local dev server logs
 .run-logs/
+
+# Paper build outputs (regenerate with paper/make_tables.py + npm run build in paper/)
+paper/out/
+paper/build/
+results/*.log

@@ -130,7 +130,16 @@ class ByteTracker:
         match_iou_threshold: float = TRACK_MATCH_IOU_THRESHOLD,
         max_age: int = TRACK_MAX_AGE,
         min_hits: int = TRACK_MIN_HITS,
+        two_stage: bool = True,
+        predict_motion: bool = True,
     ):
+        # two_stage=False drops low-confidence detections instead of using
+        # them in a second matching pass (a SORT-style single stage);
+        # predict_motion=False matches against each track's last box
+        # instead of its Kalman prediction. Both exist for the tracker
+        # ablation in scripts/vision_eval.py; the live pipeline uses neither.
+        self.two_stage = two_stage
+        self.predict_motion = predict_motion
         self.high_conf_threshold = high_conf_threshold
         self.match_iou_threshold = match_iou_threshold
         self.max_age = max_age
@@ -142,11 +151,12 @@ class ByteTracker:
         """Advances every track by dt, associates this tick's detections,
         and returns the tracks that are confirmed *and* visible this tick.
         """
-        for track in self.tracks:
-            track.kf.predict(dt)
+        if self.predict_motion:
+            for track in self.tracks:
+                track.kf.predict(dt)
 
         high = [d for d in detections if d.confidence >= self.high_conf_threshold]
-        low = [d for d in detections if d.confidence < self.high_conf_threshold]
+        low = [d for d in detections if d.confidence < self.high_conf_threshold] if self.two_stage else []
 
         all_indices = list(range(len(self.tracks)))
         matched_high, unmatched_track_idx, unmatched_high = self._match(
@@ -187,7 +197,7 @@ class ByteTracker:
 
         cost = np.ones((len(track_indices), len(detections)))
         for row, ti in enumerate(track_indices):
-            predicted = tracks[ti].predicted_box()
+            predicted = tracks[ti].predicted_box() if self.predict_motion else tracks[ti].bbox
             for col, det in enumerate(detections):
                 cost[row, col] = 1.0 - _iou(predicted, (det.x, det.y, det.w, det.h))
 

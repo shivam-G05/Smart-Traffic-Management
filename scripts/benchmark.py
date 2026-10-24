@@ -64,8 +64,16 @@ class TrialMetrics:
     mean_queue: float
     high_density_pct: float
     throughput_vph: float
+    mean_green_s: float
     measured_vehicles: int
     unfinished: int  # measured vehicles still on the road at the end (should be 0)
+    safety_violations: int  # simulation/signal_audit.py, every step (should be 0)
+    preemptions: int
+    # Table III: stopped delay of the measured emergency vehicles (each one,
+    # ";"-joined so the CSV keeps them for a rank test) and the mean of all
+    # other measured vehicles.
+    ev_delays_s: str
+    other_mean_delay_s: float
 
 
 def trial_metrics(result: TrialResult, warmup_s: float = WARMUP_S,
@@ -83,8 +91,13 @@ def trial_metrics(result: TrialResult, warmup_s: float = WARMUP_S,
         mean_queue=mean_or_nan(s.queued for s in after_warmup),
         high_density_pct=100 * mean_or_nan(s.high_density for s in after_warmup),
         throughput_vph=exits / hours if hours > 0 else float("nan"),
+        mean_green_s=mean_or_nan(length for start, length in result.green_durations_s if start > warmup_s),
         measured_vehicles=len(measured),
         unfinished=sum(1 for v in measured if v.exit_s is None),
+        safety_violations=sum(result.safety_violations.values()),
+        preemptions=result.preemptions,
+        ev_delays_s=";".join(f"{v.stopped_delay_s:.3f}" for v in measured if v.emergency),
+        other_mean_delay_s=mean_or_nan(v.stopped_delay_s for v in measured if not v.emergency),
     )
 
 
@@ -94,16 +107,20 @@ METRICS = [
     ("Mean queue (veh)", "mean_queue", 2),
     ("Time at high density (%)", "high_density_pct", 1),
     ("Throughput (veh/h)", "throughput_vph", 0),
+    ("Mean green (s)", "mean_green_s", 1),
 ]
 
 
 def run_benchmark(levels: dict[str, float], seeds: list[int], duration_s: float,
                   preemption: bool = True, jobs: int | None = None, dt: float = 0.05,
-                  controllers: tuple[str, ...] = CONTROLLERS) -> dict[str, dict[str, list[TrialMetrics]]]:
+                  controllers: tuple[str, ...] = CONTROLLERS,
+                  reaction_time_s: float = 0.0,
+                  saturation_flow_vph: float | None = None) -> dict[str, dict[str, list[TrialMetrics]]]:
     """Returns {level: {controller: [metrics per seed]}}."""
     specs = [
         TrialSpec(controller=c, seed=s, spawn_rate_per_s=rate, duration_s=duration_s,
-                  dt=dt, preemption=preemption)
+                  dt=dt, preemption=preemption, reaction_time_s=reaction_time_s,
+                  saturation_flow_vph=saturation_flow_vph)
         for rate in levels.values() for c in controllers for s in seeds
     ]
     results = iter(run_trials(specs, jobs=jobs))
@@ -141,6 +158,12 @@ def format_table(table: dict, levels: dict[str, float], duration_s: float, n_see
     unfinished = sum(m.unfinished for n in names for c in controllers for m in table[n][c])
     measured = sum(m.measured_vehicles for n in names for c in controllers for m in table[n][c])
     lines.append(f"Measured vehicles: {measured}; still on the road at the end of their run: {unfinished}.")
+    runs = [m for n in names for c in controllers for m in table[n][c]]
+    lines.append(
+        f"Signal safety audit over all {len(runs)} runs ({len(runs) * duration_s / 3600:g} simulated hours, "
+        f"{sum(m.preemptions for m in runs)} preemptions): "
+        f"{sum(m.safety_violations for m in runs)} violations."
+    )
     return "\n".join(lines)
 
 
@@ -173,6 +196,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--controllers", type=parse_controllers, default=CONTROLLERS,
                         help="comma-separated, fixed first (default: fixed,adaptive,adaptive_hold)")
     parser.add_argument("--no-preemption", action="store_true", help="run every controller without preemption")
+    parser.add_argument("--reaction-time", type=float, default=0.0,
+                        help="driver reaction time in s (default 0, the paper's model; see scripts/kinematics_check.py)")
+    parser.add_argument("--saturation-flow", type=float, default=None,
+                        help="veh/h per approach for the Webster baseline (default: decision_engine/webster.py)")
     parser.add_argument("--jobs", type=int, default=None, help="parallel processes (default: all CPU cores)")
     parser.add_argument("--csv", type=Path, help="also write every seed's metrics to this CSV file")
     args = parser.parse_args(argv)
@@ -181,7 +208,11 @@ def main(argv: list[str] | None = None) -> None:
     seeds = list(range(1, args.seeds + 1))
     preemption = not args.no_preemption
     table = run_benchmark(args.levels, seeds, args.duration, preemption=preemption, jobs=args.jobs,
-                          controllers=args.controllers)
+                          controllers=args.controllers, reaction_time_s=args.reaction_time,
+                          saturation_flow_vph=args.saturation_flow)
+    if args.reaction_time:
+        print(f"Driver reaction time: {args.reaction_time:g} s (calibrated kinematics)")
+        print()
     print(format_table(table, args.levels, args.duration, len(seeds), preemption))
     if args.csv:
         write_csv(args.csv, table, args.levels, seeds)
