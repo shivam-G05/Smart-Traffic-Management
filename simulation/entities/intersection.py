@@ -15,6 +15,8 @@ class Intersection:
         self,
         rng: random.Random | None = None,
         base_spawn_rate_per_s: float = BASE_SPAWN_RATE_PER_S,
+        entry_backlog: bool = False,
+        insert_at_speed: bool = False,
     ):
         # Defaults to a fresh, unseeded Random() rather than the bare
         # `random` module — Milestone 9 needs a *shared* generator instance
@@ -23,11 +25,19 @@ class Intersection:
         # stateless module-level `random` functions can't provide two
         # independent, separately-seeded instances of.
         self._rng = rng if rng is not None else random.Random()
-        # Configurable so scripts/benchmark.py can sweep low/medium/high
-        # demand; the live dashboard always uses the config default.
+        # Configurable so scripts/ experiments can sweep demand and test
+        # above capacity (see Road for entry_backlog); the live dashboard
+        # always uses the defaults.
         self.base_spawn_rate_per_s = base_spawn_rate_per_s
         self.roads: dict[RoadName, Road] = {
-            name: Road(name, base_spawn_rate_per_s, rng=self._rng) for name in RoadName
+            name: Road(
+                name,
+                base_spawn_rate_per_s,
+                rng=self._rng,
+                entry_backlog=entry_backlog,
+                insert_at_speed=insert_at_speed,
+            )
+            for name in RoadName
         }
         self._reshuffle_timer = 0.0
 

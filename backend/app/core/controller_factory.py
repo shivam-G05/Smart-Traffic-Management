@@ -11,6 +11,8 @@ from simulation.controllers.base_controller import SignalControllerBase
 from simulation.controllers.fixed_timer_controller import FixedTimerController
 
 
-def build_controller(controller_type: str, on_event=None) -> SignalControllerBase:
+def build_controller(controller_type: str, on_event=None, preemption: bool = True) -> SignalControllerBase:
     inner: SignalControllerBase = AdaptiveController() if controller_type == "adaptive" else FixedTimerController()
-    return EmergencyPreemptionController(inner, on_event=on_event)
+    # The live server always preempts; preemption=False exists for the
+    # experiments in scripts/ that measure what preemption costs.
+    return EmergencyPreemptionController(inner, on_event=on_event) if preemption else inner

@@ -18,6 +18,8 @@ class SimulationEngine:
         controller: SignalControllerBase | None = None,
         seed: int | None = None,
         base_spawn_rate_per_s: float = BASE_SPAWN_RATE_PER_S,
+        entry_backlog: bool = False,
+        insert_at_speed: bool = False,
     ):
         # seed=None (default) reproduces today's behavior exactly: an
         # unseeded, non-reproducible Intersection. Milestone 9 passes a
@@ -25,7 +27,12 @@ class SimulationEngine:
         # vehicle-arrival sequences, isolating the controller as the only
         # variable in the comparison.
         rng = random.Random(seed) if seed is not None else None
-        self.intersection = Intersection(rng=rng, base_spawn_rate_per_s=base_spawn_rate_per_s)
+        self.intersection = Intersection(
+            rng=rng,
+            base_spawn_rate_per_s=base_spawn_rate_per_s,
+            entry_backlog=entry_backlog,
+            insert_at_speed=insert_at_speed,
+        )
         self.controller: SignalControllerBase = controller or FixedTimerController()
         self.sim_time_s = 0.0
         self._start_wall_time = time.monotonic()

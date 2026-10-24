@@ -1003,7 +1003,7 @@ of 0.35. That was subsequently lowered to 0.12 for dashboard readability
 absolute numbers — less contention means less for an adaptive controller to
 win back. Re-measure rather than quoting the above if the demand rate
 changes again — `scripts/benchmark.py` does that across several demand
-levels and seeds; see "Benchmark — fixed vs. adaptive" below.
+levels and seeds; see "Experiments — fixed vs. adaptive" below.
 
 ---
 
@@ -1225,46 +1225,119 @@ correctly, REST calls relative, no `127.0.0.1:8000` left in the bundle),
 parsing into `Settings`, and `gpio_driver.py` in `--dry-run` mirroring the live
 backend (including the failsafe when the backend was stopped).
 
-## Benchmark — fixed vs. adaptive
+## Experiments — fixed vs. adaptive
 
-Milestone 9's live comparison is a single run at whatever demand the
-dashboard uses. `scripts/benchmark.py` produces the repeatable version: both
-controllers, headless, against identical seeded traffic at three demand
-levels, 10 seeds each.
+Two headless experiment scripts back the paper's results. Both run the
+controllers against identical seeded traffic (runs with the same seed are
+matched pairs), use every CPU core, and report mean ± 95% confidence
+interval over seeds with paired t-tests. Shared machinery (one trial, the
+per-vehicle recorder, the statistics) is in `scripts/experiment_common.py`;
+`tests/test_experiments.py` keeps it all runnable.
+
+### `scripts/benchmark.py` — the paper's Table II
 
 ```bash
-python scripts/benchmark.py                    # ~2 min: 30 min simulated x 10 seeds x 3 levels
-python scripts/benchmark.py --csv results.csv  # also write every individual run
+python scripts/benchmark.py                   # ~5 min: 3 demand levels x 10 seeds x 30 min, both controllers
+python scripts/benchmark.py --no-preemption   # same without emergency preemption
+python scripts/benchmark.py --csv results.csv # also write every seed's metrics
 python scripts/benchmark.py --duration 300 --seeds 3   # quick check
 ```
 
-Measured with the defaults:
+Follows the paper's method (Section V-A): λ = 0.08 / 0.12 / 0.18 arrivals/s
+per approach, 1800 s runs with a 60 s warm-up, delay measured over vehicles
+entering between 60 s and 1650 s (all of which leave before the run ends),
+stopped delay = time upstream of the stop line below 0.5 m/s. It reproduces
+Table II:
 
-| Traffic | Arrivals per road | Fixed avg wait | Adaptive avg wait | Wait reduction | Adaptive better | Vehicles through (fixed / adaptive) |
+| Metric | Control | Low (1152 veh/h) | Medium (1728 veh/h) | High (2592 veh/h) |
+|---|---|---|---|---|
+| Mean stopped delay (s) | Fixed | 6.96 ± 0.17 | 7.20 ± 0.20 | 7.36 ± 0.22 |
+| | Adaptive | 4.49 ± 0.10 | 4.60 ± 0.14 | 4.76 ± 0.12 |
+| | Change | −35.5% | −36.1% | −35.3% |
+| 95th-pct. delay (s) | Fixed | 23.3 ± 0.3 | 23.5 ± 0.3 | 23.6 ± 0.3 |
+| | Adaptive | 13.7 ± 0.4 | 14.2 ± 0.6 | 14.8 ± 1.0 |
+| Time at high density (%) | Fixed | 10.1 ± 1.6 | 29.5 ± 2.3 | 70.6 ± 1.4 |
+| | Adaptive | 4.4 ± 1.4 | 15.2 ± 2.1 | 45.1 ± 2.5 |
+| Throughput (veh/h) | Fixed | 1152 ± 13 | 1724 ± 15 | 2548 ± 19 |
+| | Adaptive | 1150 ± 13 | 1714 ± 19 | 2545 ± 25 |
+
+All delay changes p < 0.001; throughput p = 0.38 / 0.03 / 0.82, as in the
+paper. With `--no-preemption` the delay reduction is 38.7 / 40.0 / 41.9%,
+matching the paper's text. The adaptive controller wins by ending greens
+early: its mean green is ~9.5 s against the fixed 20 s.
+
+### `scripts/oversaturation.py` — above capacity
+
+```bash
+python scripts/oversaturation.py              # ~15 min: capacity runs + 6 demand levels x 10 seeds
+python scripts/oversaturation.py --ratios 0.9,1.1,1.3 --seeds 5
+```
+
+The paper's three demand levels turn out to be 12–27% of the junction's
+capacity, so they could not show congestion. This script first floods
+every approach to measure capacity, then sweeps demand from 0.6x to 1.5x
+the fixed-time capacity. It runs the simulation with two options that the
+dashboard and Table II do not use (`simulation/entities/road.py`):
+
+- `entry_backlog=True` — an arrival whose lane entry is blocked waits
+  off-map and enters when there is room, instead of being dropped, so
+  unserved demand, its waiting time and spillback are measured. It also
+  draws the vehicle type on arrival, so paired runs see exactly the same
+  arrivals (by default a dropped arrival skips its random draw, so paired
+  runs drift apart after the first drop).
+- `insert_at_speed=True` — a vehicle enters at the fastest speed from which
+  it can still stop behind the one ahead (as SUMO's `departSpeed="max"`).
+  Entering at rest caps the road entry below what the signal discharges, so
+  the entry rather than the junction would set the capacity (measured: 8,887
+  vs 9,533 veh/h, fixed-time, saturated).
+
+Measured with the defaults (5 capacity seeds, 10 paired seeds per level):
+
+| | Fixed | Adaptive | Change |
+|---|---|---|---|
+| Capacity (veh/h, junction) | 9701 ± 197 | 8861 ± 321 | −8.7% (p 0.004) |
+| Mean green when saturated (s) | 16.7 ± 1.4 | 11.1 ± 1.1 | −33.6% |
+
+| Demand / fixed capacity | 0.6x | 0.8x | 0.9x | 1.0x | 1.2x | 1.5x |
 |---|---|---|---|---|---|---|
-| low | 216/h | 6.85 s | 4.47 s | 34.7% (sd 4.8) | 10/10 seeds | 421 / 422 |
-| medium | 432/h | 7.16 s | 4.57 s | 36.2% (sd 2.9) | 10/10 seeds | 841 / 837 |
-| high | 900/h | 7.50 s | 4.84 s | 35.5% (sd 3.8) | 10/10 seeds | 1638 / 1613 |
+| Throughput, fixed (veh/h) | 5852 | 7748 | 8684 | 9557 | 9870 | 9670 |
+| Throughput, adaptive (veh/h) | 5856 | 7730 | 8627 | 9128 | 8920 | 8952 |
+| Delay incl. still waiting, fixed (s) | 6.8 | 9.0 | 11.2 | 14.8 | 126.0 | 335.2 |
+| Delay incl. still waiting, adaptive (s) | 5.4 | 9.0 | 15.4 | 48.4 | 209.7 | 383.1 |
+| Queue growth, fixed (veh/min) | 0.0 | 0.0 | 0.0 | 0.3 | 27.3 | 84.4 |
+| Queue growth, adaptive (veh/min) | 0.0 | 0.0 | 0.7 | 6.8 | 42.9 | 96.1 |
+| Spillback, fixed (% approach-time) | 0.0 | 0.0 | 1.3 | 5.0 | 78.9 | 96.9 |
+| Spillback, adaptive (% approach-time) | 0.0 | 0.1 | 5.0 | 37.1 | 88.7 | 97.2 |
 
-What these numbers are, and are not:
+(Means over seeds; the script prints confidence intervals, p-values,
+served share, final queue and first-spillback time as well.)
 
-- **Wait time** is time a vehicle actually spent stopped in a queue
-  (`Vehicle.queued_time_s`, Milestone 7), averaged over every vehicle that
-  left the map — not total travel time.
-- **Both sides are built through `controller_factory.build_controller()`**,
-  so both get emergency preemption; the controller strategy is the only
-  difference. Each seed gives both sides the exact same arrivals.
-- **Throughput is unchanged** (within 1.5%): the adaptive controller cuts
-  waiting, it does not push more vehicles through. At high demand it moves
-  slightly fewer, since longer greens mean fewer phase changes.
-- **These are simulation results**, from this project's own traffic model
-  and the vehicle positions it knows exactly — not measurements from a
-  real intersection or from the camera pipeline.
+**The adaptive controller's advantage disappears near capacity and reverses
+above it.** It gives 22% less delay at 0.6x, the same at 0.8x, and is
+worse from 0.9x on: 4.5–9.6% less throughput at and above capacity, faster queue growth and
+more spillback. The cause is visible in the mean green. The rule ends a
+green once the served direction's score no longer beats the waiting
+direction's by 10%; when both directions are saturated, the stopped queue
+on red (weight 1.5 per vehicle) soon outweighs the vehicles still
+discharging on green (0.5), so greens stay short (~11 s). Every phase
+change costs 4 s of yellow and all-red, so short greens lose capacity
+exactly when it is scarcest. Fixing this (e.g. holding green while the
+served queue is still discharging) is a direct next step.
 
-The demand level is the one simulation input the script varies, via
-`SimulationEngine(base_spawn_rate_per_s=...)`; everything else uses the
-live dashboard's constants. `tests/test_benchmark.py` keeps the script
-runnable.
+### Model notes worth knowing before quoting these numbers
+
+- **Arrivals are not Poisson.** `Road.maybe_spawn` releases a vehicle
+  every 1/λ seconds (a deterministic headway); only the rate is redrawn,
+  every 15 s, as λ·U(0.4, 1.6). The paper describes the arrivals as a
+  Poisson process.
+- **The simulated saturation flow is high.** Capacity of ~9,700 veh/h at a
+  green share of ~0.4 means ~1.2 s headways per lane: the car-following
+  model has no reaction time or start-up lost time, and motorcycles (25% of
+  vehicles) count as full vehicles. Absolute capacities are therefore not
+  field values; the fixed-vs-adaptive comparison is what these runs show.
+- **Everything is simulation**, from this project's own traffic model and
+  the vehicle positions it knows exactly — not a real junction, and not the
+  camera pipeline.
 
 ## Running it
 
@@ -1308,12 +1381,12 @@ cd backend
 python -m pytest -q
 ```
 
-72 tests across `tests/test_simulation.py`, `tests/test_api.py`,
+79 tests across `tests/test_simulation.py`, `tests/test_api.py`,
 `tests/test_connection_manager.py`, `tests/test_vision.py`,
 `tests/test_tracker.py`, `tests/test_density.py`,
 `tests/test_adaptive_controller.py`, `tests/test_emergency_preemption.py`,
 `tests/test_analytics.py`, `tests/test_database.py`,
-`tests/test_comparison.py`, and `tests/test_benchmark.py` — see each
+`tests/test_comparison.py`, and `tests/test_experiments.py` — see each
 milestone section above for what's covered where.
 
 ---

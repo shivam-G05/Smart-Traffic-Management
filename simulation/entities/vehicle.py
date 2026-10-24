@@ -15,6 +15,9 @@ class Vehicle:
     id: int = field(default_factory=lambda: next(_id_counter))
     exited: bool = False
     queued_time_s: float = 0.0
+    # Time spent waiting to enter the road because its entry was blocked —
+    # only ever non-zero when the road runs with entry_backlog=True.
+    entry_wait_s: float = 0.0
 
     @property
     def profile(self):

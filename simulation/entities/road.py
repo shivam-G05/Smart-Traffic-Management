@@ -1,8 +1,11 @@
+import math
 import random
+from collections import deque
 
 from simulation.config import (
     INTERSECTION_EXIT_POS_M,
     LANES_PER_ROAD,
+    MIN_VEHICLE_GAP_M,
     SAFE_FOLLOWING_GAP_M,
     VEHICLE_PROFILES,
     RoadName,
@@ -17,7 +20,14 @@ _SPAWN_WEIGHTS = [VEHICLE_PROFILES[t].spawn_weight for t in _VEHICLE_TYPES]
 
 
 class Road:
-    def __init__(self, name: RoadName, spawn_rate_per_s: float, rng: random.Random | None = None):
+    def __init__(
+        self,
+        name: RoadName,
+        spawn_rate_per_s: float,
+        rng: random.Random | None = None,
+        entry_backlog: bool = False,
+        insert_at_speed: bool = False,
+    ):
         self.name = name
         self.lanes = [Lane(i) for i in range(LANES_PER_ROAD)]
         self.light = TrafficLight()
@@ -28,12 +38,87 @@ class Road:
         # instance so two engines can be compared against identical
         # vehicle-arrival sequences.
         self._rng = rng if rng is not None else random
+        # entry_backlog=False (default, the live dashboard and the paper's
+        # experiments) drops an arrival whose lane entry is still occupied.
+        # Above capacity that hides the overload: demand silently vanishes
+        # instead of queueing. With entry_backlog=True a blocked arrival
+        # waits off-map in arrival order and enters as soon as a lane has
+        # room, so unserved demand, spillback and entry delay are measurable.
+        # Its vehicle type is drawn on arrival, not on entry, so two runs
+        # with the same seed see identical arrivals whatever the controller.
+        self.entry_backlog = entry_backlog
+        # insert_at_speed=False (default) puts a new vehicle on the road at
+        # rest. A vehicle then has to accelerate ~12 m before the next can
+        # enter, which caps entry at roughly 2 vehicles per 3 s per approach
+        # — below what the signal can discharge, so above capacity the road
+        # entry, not the junction, would be the bottleneck. With True a
+        # vehicle enters at the fastest speed from which it can still stop
+        # behind the vehicle ahead (like SUMO's departSpeed="max").
+        self.insert_at_speed = insert_at_speed
+        self._clock_s = 0.0
+        self._backlog: deque[tuple[VehicleType, float]] = deque()  # (type, arrival time)
 
     def maybe_spawn(self, dt: float) -> None:
+        self._clock_s += dt
         self._spawn_accumulator += self.spawn_rate_per_s * dt
         while self._spawn_accumulator >= 1.0:
             self._spawn_accumulator -= 1.0
-            self._spawn_vehicle()
+            if self.entry_backlog:
+                self._backlog.append((self._draw_vehicle_type(), self._clock_s))
+            else:
+                self._spawn_vehicle()
+        if self.entry_backlog:
+            self._admit_backlog()
+
+    def _draw_vehicle_type(self) -> VehicleType:
+        return self._rng.choices(_VEHICLE_TYPES, weights=_SPAWN_WEIGHTS, k=1)[0]
+
+    @staticmethod
+    def _entry_clear(lane: Lane) -> bool:
+        if not lane.vehicles:
+            return True
+        last = lane.vehicles[-1]
+        return last.position_m - last.profile.length_m >= SAFE_FOLLOWING_GAP_M
+
+    def _admit_backlog(self) -> None:
+        while self._backlog:
+            free = [lane for lane in self.lanes if self._entry_clear(lane)]
+            if not free:
+                return
+            lane = min(free, key=lambda l: l.vehicle_count())
+            vehicle_type, arrived_at = self._backlog.popleft()
+            vehicle = Vehicle(
+                vehicle_type=vehicle_type,
+                lane_index=lane.lane_index,
+                entry_wait_s=self._clock_s - arrived_at,
+            )
+            self._set_entry_speed(vehicle, lane)
+            lane.spawn(vehicle)
+
+    def _set_entry_speed(self, vehicle: Vehicle, lane: Lane) -> None:
+        if not self.insert_at_speed:
+            return
+        profile = vehicle.profile
+        speed = profile.max_speed_mps
+        if lane.vehicles:
+            # Same Gipps-style bound Lane applies every step: no faster than
+            # still lets it stop MIN_VEHICLE_GAP_M behind the leader even if
+            # the leader brakes as hard as it can.
+            leader = lane.vehicles[-1]
+            gap = leader.position_m - leader.profile.length_m
+            leader_stopping_m = leader.speed_mps ** 2 / (2 * leader.profile.deceleration_mps2)
+            usable_gap = max(0.0, gap + leader_stopping_m - MIN_VEHICLE_GAP_M)
+            speed = min(speed, math.sqrt(2 * profile.deceleration_mps2 * usable_gap))
+        vehicle.speed_mps = speed
+
+    @property
+    def backlog_count(self) -> int:
+        """Arrivals still waiting to enter (always 0 without entry_backlog)."""
+        return len(self._backlog)
+
+    def backlog_waits_s(self) -> list[float]:
+        """How long each vehicle still in the backlog has waited so far."""
+        return [self._clock_s - arrived_at for _, arrived_at in self._backlog]
 
     def _spawn_vehicle(self) -> None:
         lane = min(self.lanes, key=lambda l: l.vehicle_count())
@@ -45,7 +130,9 @@ class Road:
             if last.position_m - last.profile.length_m < SAFE_FOLLOWING_GAP_M:
                 return  # spawn point still occupied, skip this arrival
         vehicle_type: VehicleType = self._rng.choices(_VEHICLE_TYPES, weights=_SPAWN_WEIGHTS, k=1)[0]
-        lane.spawn(Vehicle(vehicle_type=vehicle_type, lane_index=lane.lane_index))
+        vehicle = Vehicle(vehicle_type=vehicle_type, lane_index=lane.lane_index)
+        self._set_entry_speed(vehicle, lane)
+        lane.spawn(vehicle)
 
     def update(self, dt: float) -> None:
         self.light.tick(dt)

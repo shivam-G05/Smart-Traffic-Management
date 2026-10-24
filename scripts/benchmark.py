@@ -1,170 +1,152 @@
-"""Fixed-timer vs. adaptive benchmark — reproduces the wait-time table.
+"""Fixed-timer vs. adaptive benchmark, following the paper's method
+(Section V-A and Table II).
 
-Runs both controllers headless (no FastAPI, no WebSocket, no vision) against
-identical seeded traffic at several demand levels and reports the average
-wait time, throughput, and wait-time reduction with its spread across seeds.
+Both controllers run headless (no FastAPI, no WebSocket, no vision) against
+identical seeded traffic at three demand levels, ten seeds each. Runs with
+the same seed form matched pairs, compared with paired t-tests; every value
+is the mean over seeds ± its 95% confidence interval.
 
-Both sides are built through backend/app/core/controller_factory.py, exactly
-like the live server, so both get Milestone 6 emergency preemption — the
-controller strategy is the only variable.
-
-"Wait time" is the same measurement the analytics dashboard uses: seconds a
-vehicle actually spent stopped in a queue (Vehicle.queued_time_s), averaged
-over every vehicle that left the map. Free-flow travel is never counted as
-waiting.
+Method, as in the paper:
+- 1800 s per run, 50 ms step; the first 60 s are a warm-up.
+- Delay statistics use the vehicles that *entered* between 60 s and 1650 s
+  (the script checks they all left before the end of the run).
+- Stopped delay = time a vehicle spends upstream of the stop line below
+  0.5 m/s (Vehicle.queued_time_s), the same quantity the dashboard shows.
+- Mean queue and time at high density come from a 1 Hz sample after the
+  warm-up; "high density" = at least one approach above 6.0.
+- Throughput = vehicles leaving the map after the warm-up, per hour.
 
 Usage (from the repo root):
 
-    python scripts/benchmark.py                       # 30 min x 10 seeds x 3 levels
-    python scripts/benchmark.py --duration 300 --seeds 3
+    python scripts/benchmark.py                       # Table II, preemption on
+    python scripts/benchmark.py --no-preemption       # same, preemption off
+    python scripts/benchmark.py --duration 300 --seeds 3   # quick check
     python scripts/benchmark.py --csv results.csv     # also write per-seed rows
 """
 
 import argparse
 import csv
-import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-for _path in (_REPO_ROOT, _REPO_ROOT / "backend"):
-    if str(_path) not in sys.path:
-        sys.path.insert(0, str(_path))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from app.core.controller_factory import build_controller  # noqa: E402
-from simulation.engine import SimulationEngine  # noqa: E402
+from experiment_common import (  # noqa: E402
+    TrialResult,
+    TrialSpec,
+    fmt_change,
+    fmt_ci,
+    mean_or_nan,
+    percentile,
+    run_trials,
+    use_utf8_stdout,
+)
 
-# Mean arrivals per second per road. 0.12 is the live dashboard's default
-# (simulation/config.py BASE_SPAWN_RATE_PER_S); low halves it, high roughly
-# doubles it (close to the original 0.35 the dashboard ran at before the
-# readability pass).
-DEFAULT_LEVELS = {"low": 0.06, "medium": 0.12, "high": 0.25}
-DEFAULT_DURATION_S = 1800.0
+# Mean arrivals per second per approach (paper: 1152 / 1728 / 2592 veh/h
+# offered to the junction).
+DEFAULT_LEVELS = {"low": 0.08, "medium": 0.12, "high": 0.18}
 DEFAULT_SEEDS = 10
-DEFAULT_DT = 0.05  # same 20Hz tick the live server uses
+DEFAULT_DURATION_S = 1800.0
+WARMUP_S = 60.0
+# Vehicles entering in the last 150 s are not measured, so every measured
+# vehicle can leave before the run ends (1650 s in a 1800 s run).
+ENTRY_TAIL_S = 150.0
 
 
 @dataclass(frozen=True)
-class RunResult:
-    controller: str
-    level: str
-    spawn_rate_per_s: float
-    seed: int
-    vehicles_exited: int
-    avg_wait_s: float | None  # None when no vehicle exited, never a made-up 0
+class TrialMetrics:
+    mean_delay_s: float
+    p95_delay_s: float
+    mean_queue: float
+    high_density_pct: float
+    throughput_vph: float
+    measured_vehicles: int
+    unfinished: int  # measured vehicles still on the road at the end (should be 0)
 
 
-@dataclass(frozen=True)
-class LevelSummary:
-    level: str
-    spawn_rate_per_s: float
-    fixed_avg_wait_s: float
-    adaptive_avg_wait_s: float
-    fixed_throughput: float
-    adaptive_throughput: float
-    reduction_mean_pct: float
-    reduction_sd_pct: float
-    adaptive_wins: int
-    seeds_compared: int
-
-
-def run_once(controller_type: str, level: str, spawn_rate_per_s: float, seed: int,
-             duration_s: float, dt: float) -> RunResult:
-    engine = SimulationEngine(
-        controller=build_controller(controller_type),
-        seed=seed,
-        base_spawn_rate_per_s=spawn_rate_per_s,
-    )
-    for _ in range(int(round(duration_s / dt))):
-        engine.tick(dt)
-
-    roads = engine.intersection.roads.values()
-    exited = sum(road.total_exited() for road in roads)
-    total_wait = sum(road.total_wait_time_s() for road in roads)
-    return RunResult(
-        controller=controller_type,
-        level=level,
-        spawn_rate_per_s=spawn_rate_per_s,
-        seed=seed,
-        vehicles_exited=exited,
-        avg_wait_s=(total_wait / exited) if exited else None,
+def trial_metrics(result: TrialResult, warmup_s: float = WARMUP_S,
+                  entry_tail_s: float = ENTRY_TAIL_S) -> TrialMetrics:
+    duration = result.spec.duration_s
+    cutoff = duration - entry_tail_s
+    measured = [v for v in result.vehicles if warmup_s <= v.entry_s < cutoff]
+    delays = [v.stopped_delay_s for v in measured]
+    after_warmup = [s for s in result.samples if s.t > warmup_s]
+    exits = sum(1 for v in result.vehicles if v.exit_s is not None and v.exit_s > warmup_s)
+    hours = (duration - warmup_s) / 3600
+    return TrialMetrics(
+        mean_delay_s=mean_or_nan(delays),
+        p95_delay_s=percentile(delays, 95),
+        mean_queue=mean_or_nan(s.queued for s in after_warmup),
+        high_density_pct=100 * mean_or_nan(s.high_density for s in after_warmup),
+        throughput_vph=exits / hours if hours > 0 else float("nan"),
+        measured_vehicles=len(measured),
+        unfinished=sum(1 for v in measured if v.exit_s is None),
     )
 
 
-def summarize(level: str, spawn_rate_per_s: float, fixed: list[RunResult],
-              adaptive: list[RunResult]) -> LevelSummary:
-    """Pairs runs by seed. A seed only contributes a reduction when both
-    sides had departures and the fixed side had non-zero wait — otherwise
-    there is nothing honest to divide by, and that seed is left out."""
-    reductions = []
-    wins = 0
-    for f, a in zip(fixed, adaptive):
-        if f.avg_wait_s is None or a.avg_wait_s is None or f.avg_wait_s == 0:
-            continue
-        reductions.append((f.avg_wait_s - a.avg_wait_s) / f.avg_wait_s * 100)
-        wins += a.avg_wait_s < f.avg_wait_s
-
-    def mean_wait(runs):
-        waits = [r.avg_wait_s for r in runs if r.avg_wait_s is not None]
-        return statistics.mean(waits) if waits else float("nan")
-
-    return LevelSummary(
-        level=level,
-        spawn_rate_per_s=spawn_rate_per_s,
-        fixed_avg_wait_s=mean_wait(fixed),
-        adaptive_avg_wait_s=mean_wait(adaptive),
-        fixed_throughput=statistics.mean(r.vehicles_exited for r in fixed),
-        adaptive_throughput=statistics.mean(r.vehicles_exited for r in adaptive),
-        reduction_mean_pct=statistics.mean(reductions) if reductions else float("nan"),
-        reduction_sd_pct=statistics.stdev(reductions) if len(reductions) > 1 else 0.0,
-        adaptive_wins=wins,
-        seeds_compared=len(reductions),
-    )
+METRICS = [
+    ("Mean stopped delay (s)", "mean_delay_s", 2),
+    ("95th-pct. delay (s)", "p95_delay_s", 1),
+    ("Mean queue (veh)", "mean_queue", 2),
+    ("Time at high density (%)", "high_density_pct", 1),
+    ("Throughput (veh/h)", "throughput_vph", 0),
+]
 
 
 def run_benchmark(levels: dict[str, float], seeds: list[int], duration_s: float,
-                  dt: float, progress=None) -> tuple[list[LevelSummary], list[RunResult]]:
-    summaries, all_runs = [], []
-    for level, rate in levels.items():
-        fixed = [run_once("fixed", level, rate, s, duration_s, dt) for s in seeds]
-        adaptive = [run_once("adaptive", level, rate, s, duration_s, dt) for s in seeds]
-        all_runs += fixed + adaptive
-        summaries.append(summarize(level, rate, fixed, adaptive))
-        if progress:
-            progress(f"{level} done")
-    return summaries, all_runs
-
-
-def format_table(summaries: list[LevelSummary], duration_s: float, n_seeds: int) -> str:
-    lines = [
-        f"Simulated {duration_s / 60:g} min per run, {n_seeds} seeds per level, "
-        "both controllers with emergency preemption.",
-        "",
-        "| Traffic | Arrivals per road | Fixed avg wait | Adaptive avg wait "
-        "| Wait reduction | Adaptive better | Vehicles through (fixed / adaptive) |",
-        "|---|---|---|---|---|---|---|",
+                  preemption: bool = True, jobs: int | None = None,
+                  dt: float = 0.05) -> dict[str, dict[str, list[TrialMetrics]]]:
+    """Returns {level: {"fixed": [metrics per seed], "adaptive": [...]}}."""
+    specs = [
+        TrialSpec(controller=c, seed=s, spawn_rate_per_s=rate, duration_s=duration_s,
+                  dt=dt, preemption=preemption)
+        for rate in levels.values() for c in ("fixed", "adaptive") for s in seeds
     ]
-    for s in summaries:
-        lines.append(
-            f"| {s.level} | {s.spawn_rate_per_s * 3600:.0f}/h "
-            f"| {s.fixed_avg_wait_s:.2f} s | {s.adaptive_avg_wait_s:.2f} s "
-            f"| {s.reduction_mean_pct:.1f}% (sd {s.reduction_sd_pct:.1f}) "
-            f"| {s.adaptive_wins}/{s.seeds_compared} seeds "
-            f"| {s.fixed_throughput:.0f} / {s.adaptive_throughput:.0f} |"
-        )
+    results = iter(run_trials(specs, jobs=jobs))
+    table: dict[str, dict[str, list[TrialMetrics]]] = {}
+    for level in levels:
+        table[level] = {c: [trial_metrics(next(results)) for _ in seeds] for c in ("fixed", "adaptive")}
+    return table
+
+
+def format_table(table: dict, levels: dict[str, float], duration_s: float, n_seeds: int,
+                 preemption: bool) -> str:
+    names = list(levels)
+    lines = [
+        f"Fixed-time vs adaptive, preemption {'enabled' if preemption else 'disabled'}: "
+        f"{n_seeds} paired seeds x {duration_s:g} s per level.",
+        "",
+        "| Metric | Control | " + " | ".join(
+            f"{n} (λ={levels[n]:g}, {levels[n] * 4 * 3600:.0f} veh/h)" for n in names) + " |",
+        "|---|---|" + "---|" * len(names),
+    ]
+    for label, attr, digits in METRICS:
+        fixed = {n: [getattr(m, attr) for m in table[n]["fixed"]] for n in names}
+        adaptive = {n: [getattr(m, attr) for m in table[n]["adaptive"]] for n in names}
+        lines.append(f"| {label} | Fixed | " + " | ".join(fmt_ci(fixed[n], digits) for n in names) + " |")
+        lines.append("| | Adaptive | " + " | ".join(fmt_ci(adaptive[n], digits) for n in names) + " |")
+        lines.append("| | Change | " + " | ".join(fmt_change(fixed[n], adaptive[n]) for n in names) + " |")
+    lines += [
+        "",
+        "Mean ± 95% confidence interval over seeds. Change = paired difference relative to "
+        "fixed-time control, p = paired t-test.",
+    ]
+    unfinished = sum(m.unfinished for n in names for c in ("fixed", "adaptive") for m in table[n][c])
+    measured = sum(m.measured_vehicles for n in names for c in ("fixed", "adaptive") for m in table[n][c])
+    lines.append(f"Measured vehicles: {measured}; still on the road at the end of their run: {unfinished}.")
     return "\n".join(lines)
 
 
-def write_csv(path: Path, runs: list[RunResult]) -> None:
+def write_csv(path: Path, table: dict, levels: dict[str, float], seeds: list[int]) -> None:
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["level", "spawn_rate_per_s", "seed", "controller", "vehicles_exited", "avg_wait_s"])
-        for r in runs:
-            writer.writerow([
-                r.level, r.spawn_rate_per_s, r.seed, r.controller, r.vehicles_exited,
-                "" if r.avg_wait_s is None else round(r.avg_wait_s, 3),
-            ])
+        writer.writerow(["level", "spawn_rate_per_s", "seed", "controller", *TrialMetrics.__dataclass_fields__])
+        for level, rate in levels.items():
+            for controller in ("fixed", "adaptive"):
+                for seed, m in zip(seeds, table[level][controller]):
+                    writer.writerow([level, rate, seed, controller, *(round(getattr(m, f), 4) if isinstance(
+                        getattr(m, f), float) else getattr(m, f) for f in TrialMetrics.__dataclass_fields__)])
 
 
 def _parse_levels(text: str) -> dict[str, float]:
@@ -179,23 +161,21 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--duration", type=float, default=DEFAULT_DURATION_S,
                         help="simulated seconds per run (default: 1800)")
-    parser.add_argument("--seeds", type=int, default=DEFAULT_SEEDS,
-                        help="number of seeds per level, 1..N (default: 10)")
-    parser.add_argument("--levels", type=_parse_levels,
-                        default=DEFAULT_LEVELS,
-                        help='name=arrivals/s/road pairs (default: "low=0.06,medium=0.12,high=0.25")')
-    parser.add_argument("--dt", type=float, default=DEFAULT_DT, help="tick length in seconds (default: 0.05)")
-    parser.add_argument("--csv", type=Path, help="also write every individual run to this CSV file")
+    parser.add_argument("--seeds", type=int, default=DEFAULT_SEEDS, help="seeds per level, 1..N (default: 10)")
+    parser.add_argument("--levels", type=_parse_levels, default=DEFAULT_LEVELS,
+                        help='name=arrivals/s/approach pairs (default: "low=0.08,medium=0.12,high=0.18")')
+    parser.add_argument("--no-preemption", action="store_true", help="run both controllers without preemption")
+    parser.add_argument("--jobs", type=int, default=None, help="parallel processes (default: all CPU cores)")
+    parser.add_argument("--csv", type=Path, help="also write every seed's metrics to this CSV file")
     args = parser.parse_args(argv)
 
+    use_utf8_stdout()
     seeds = list(range(1, args.seeds + 1))
-    summaries, runs = run_benchmark(
-        args.levels, seeds, args.duration, args.dt,
-        progress=lambda msg: print(msg, file=sys.stderr, flush=True),
-    )
-    print(format_table(summaries, args.duration, len(seeds)))
+    preemption = not args.no_preemption
+    table = run_benchmark(args.levels, seeds, args.duration, preemption=preemption, jobs=args.jobs)
+    print(format_table(table, args.levels, args.duration, len(seeds), preemption))
     if args.csv:
-        write_csv(args.csv, runs)
+        write_csv(args.csv, table, args.levels, seeds)
         print(f"\nPer-seed results written to {args.csv}", file=sys.stderr)
 
 
