@@ -30,6 +30,7 @@ from decision_engine.webster import webster_green_s  # noqa: E402
 from simulation.signal_audit import SignalAudit  # noqa: E402
 from simulation.config import LightState, RoadName  # noqa: E402
 from simulation.engine import SimulationEngine  # noqa: E402
+from simulation.entities.intersection import demand_multiplier  # noqa: E402
 
 
 # Every controller the experiments compare, baseline first. See
@@ -44,6 +45,17 @@ CONTROLLER_LABELS = {
     "adaptive": "Adaptive",
     "adaptive_hold": "Adaptive + hold",
 }
+
+
+GAP_OUT_CONTROLLERS = ("actuated", "adaptive_hold")
+
+
+def zone_options(controller: str, hold_zone_m: float | None) -> tuple:
+    """Controller options for a non-default stop-line zone (scripts/tune_zone.py);
+    applies to both gap-out controllers so they stay comparable."""
+    if hold_zone_m is None or controller not in GAP_OUT_CONTROLLERS:
+        return ()
+    return (("discharge_zone_m", float(hold_zone_m)),)
 
 
 def parse_controllers(text: str) -> tuple[str, ...]:
@@ -75,6 +87,9 @@ class TrialSpec:
     # SensorModel fields as (name, value) pairs; empty = exact vehicle
     # states (the default). See decision_engine/sensing.py.
     sensor: tuple = ()
+    # (time_s, multiplier) points scaling spawn_rate_per_s over time; empty
+    # = constant demand. See simulation/entities/intersection.py.
+    demand_profile: tuple = ()
     # Extra constructor arguments for the controller, as (name, value)
     # pairs — used by the ablation experiments.
     options: tuple = ()
@@ -83,8 +98,12 @@ class TrialSpec:
         options = dict(self.options)
         if self.controller == "webster" and "green_s" not in options:
             # Webster's plan is tuned to the mean demand of this very run.
-            options["green_s"] = (webster_green_s(self.spawn_rate_per_s, self.saturation_flow_vph)
-                                  if self.saturation_flow_vph else webster_green_s(self.spawn_rate_per_s))
+            # With a demand profile a fixed plan can only be timed for the
+            # average demand over the run.
+            rate = self.spawn_rate_per_s * statistics.mean(
+                demand_multiplier(self.demand_profile, t) for t in range(int(self.duration_s)))
+            options["green_s"] = (webster_green_s(rate, self.saturation_flow_vph)
+                                  if self.saturation_flow_vph else webster_green_s(rate))
         return options
 
 
@@ -140,6 +159,7 @@ def run_trial(spec: TrialSpec) -> TrialResult:
         entry_backlog=spec.entry_backlog,
         insert_at_speed=spec.insert_at_speed,
         reaction_time_s=spec.reaction_time_s,
+        demand_profile=spec.demand_profile,
     )
     roads = list(engine.intersection.roads.values())
     lanes = [lane for road in roads for lane in road.lanes]

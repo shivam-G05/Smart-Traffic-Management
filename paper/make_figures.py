@@ -214,7 +214,7 @@ def fig_preemption():
 
 def read_csv(name):
     path = RESULTS / name
-    with path.open(newline="") as f:
+    with path.open(newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
@@ -270,7 +270,7 @@ def fig_oversaturation(controllers, csv_name="oversaturation_preemption_off.csv"
     for r in rows:
         delay[(float(r["ratio"]), r["controller"])].append(float(r["delay_all_lb_s"]))
         thru[(float(r["ratio"]), r["controller"])].append(float(r["throughput_vph"]))
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(COL_W, 3.3), sharex=True)
+    fig, (a1, a2) = plt.subplots(2, 1, figsize=(COL_W, 3.75), sharex=True)
     for c in controllers:
         kw = dict(marker=MARKERS[c], linestyle=STYLES[c], color="black", markersize=3.2,
                   linewidth=1.2 if c == "adaptive_hold" else 0.8, label=LABELS[c],
@@ -284,8 +284,43 @@ def fig_oversaturation(controllers, csv_name="oversaturation_preemption_off.csv"
     for a in (a1, a2):
         a.spines[["top", "right"]].set_visible(False)
         a.axvline(1.0, color="0.6", linewidth=0.5, linestyle=":")
-    a1.legend(ncol=2, fontsize=5.6, frameon=False, loc="upper left", handlelength=2.2)
-    fig.tight_layout(pad=0.3, h_pad=0.4)
+    handles, labels = a1.get_legend_handles_labels()
+    fig.legend(handles, labels, ncol=4, fontsize=5.4, frameon=False, loc="lower center", bbox_to_anchor=(0.5, 0.0),
+               handlelength=2.2, columnspacing=0.8)
+    fig.tight_layout(pad=0.3, h_pad=0.4, rect=(0, 0.08, 1, 1))
+    fig.savefig(OUT / out)
+    plt.close(fig)
+
+
+def fig_peak_queue(controllers, csv_name="peak_period_series.csv", out="fig6_peak_queue.png"):
+    """Queue (links + waiting to enter) over the 60-minute peak period."""
+    rows = read_csv(csv_name)
+    series = defaultdict(list)
+    for r in rows:
+        series[r["controller"]].append((float(r["t_s"]) / 60, float(r["mean_queue"])))
+    fig, ax = plt.subplots(figsize=(COL_W, 2.55))
+    ax.axvspan(15, 30, color="0.88", linewidth=0)
+    ax.axvspan(10, 15, color="0.94", linewidth=0)
+    ax.axvspan(30, 35, color="0.94", linewidth=0)
+    ax.text(22.5, 0.97, "peak: 1.2× capacity", transform=ax.get_xaxis_transform(), ha="center", va="top", fontsize=6)
+    smooth = 4  # 4 x 30 s = 2-minute moving average
+    for c in controllers:
+        if c not in series:
+            continue
+        t, q = zip(*sorted(series[c]))
+        q_s = [statistics.mean(q[max(0, i - smooth + 1):i + 1]) for i in range(len(q))]
+        ax.plot(t, q_s, linestyle=STYLES[c], color="black", linewidth=1.4 if c == "adaptive_hold" else 0.8,
+                marker=MARKERS[c], markevery=(controllers.index(c) * 2, 14), markersize=3,
+                markerfacecolor="white" if c in ("fixed", "webster", "max_pressure", "density_levels") else "black",
+                label=LABELS[c])
+    ax.set_xlabel("Time (min)")
+    ax.set_ylabel("Queue incl. waiting to enter (veh)")
+    ax.set_xlim(0, 60)
+    ax.set_ylim(bottom=0)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(ncol=4, fontsize=5.4, frameon=False, loc="upper center", bbox_to_anchor=(0.45, -0.22),
+              handlelength=2.2, columnspacing=0.8)
+    fig.tight_layout(pad=0.3)
     fig.savefig(OUT / out)
     plt.close(fig)
 
@@ -300,6 +335,8 @@ def main():
         fig_delay_bars(controllers)
     if (RESULTS / "oversaturation_preemption_off.csv").exists():
         fig_oversaturation(controllers)
+    if (RESULTS / "peak_period_series.csv").exists():
+        fig_peak_queue(controllers)
     print("figures written to", OUT)
 
 

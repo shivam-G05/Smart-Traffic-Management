@@ -170,3 +170,24 @@ def test_webster_trials_get_a_demand_specific_green():
     low = common.TrialSpec("webster", 1, 0.05, duration_s=60).controller_options()["green_s"]
     high = common.TrialSpec("webster", 1, 0.6, duration_s=60).controller_options()["green_s"]
     assert low < high
+
+
+peak = _load("peak_period")
+
+
+def test_peak_period_metrics_capture_build_up_and_recovery():
+    spec = common.TrialSpec("adaptive_hold", 1, peak.CAPACITY_RATE, duration_s=peak.DURATION_S,
+                            preemption=False, entry_backlog=True, insert_at_speed=True,
+                            demand_profile=peak.PROFILE)
+    m = peak.run_metrics(common.run_trial(spec))
+    assert m["peak_queue"] > 50                 # the 1.2x peak builds a real queue
+    assert 0 < m["recovery_min"] < 30           # and the hold controller clears it within the hour
+    assert m["peak_throughput_vph"] > 9000
+    assert len(m["series"]) == int(peak.DURATION_S // peak.SERIES_STEP_S)
+
+
+def test_zone_options_apply_only_to_gap_out_controllers():
+    assert common.zone_options("adaptive_hold", 25) == (("discharge_zone_m", 25.0),)
+    assert common.zone_options("actuated", 25) == (("discharge_zone_m", 25.0),)
+    assert common.zone_options("adaptive", 25) == ()
+    assert common.zone_options("adaptive_hold", None) == ()

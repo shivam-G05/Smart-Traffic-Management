@@ -179,3 +179,24 @@ def test_reaction_time_still_never_lets_vehicles_overlap():
             for lane in road.lanes:
                 for leader, follower in zip(lane.vehicles, lane.vehicles[1:]):
                     assert leader.position_m - leader.profile.length_m - follower.position_m >= 2.0 - 1e-6
+
+
+def test_demand_profile_interpolates_and_defaults_to_constant():
+    from simulation.entities.intersection import demand_multiplier
+
+    profile = ((0, 0.5), (100, 0.5), (200, 1.5))
+    assert demand_multiplier((), 1234) == 1.0
+    assert demand_multiplier(profile, 50) == 0.5
+    assert demand_multiplier(profile, 150) == pytest.approx(1.0)
+    assert demand_multiplier(profile, 999) == 1.5
+
+
+def test_demand_profile_raises_arrivals_during_the_peak():
+    def arrivals(profile):
+        engine = SimulationEngine(seed=5, base_spawn_rate_per_s=0.3, entry_backlog=True, demand_profile=profile)
+        for _ in range(int(600 / 0.05)):
+            engine.tick(0.05)
+        roads = engine.intersection.roads.values()
+        return sum(r.total_exited() + r.total_vehicle_count() + r.backlog_count for r in roads)
+
+    assert arrivals(((0, 2.0),)) > 1.5 * arrivals(())

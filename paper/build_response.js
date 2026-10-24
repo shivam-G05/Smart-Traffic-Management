@@ -9,8 +9,9 @@ const {
 const { FONT, runs } = require("./ieee");
 
 const HERE = __dirname;
-const N = JSON.parse(fs.readFileSync(path.join(HERE, "build", "numbers.json"), "utf8"));
-const OUT = path.join(HERE, "out", "Response_to_Reviewers_Paper2017.docx");
+// NUMBERS / OUT_DIR override the inputs and output folder (used for test builds).
+const N = JSON.parse(fs.readFileSync(process.env.NUMBERS || path.join(HERE, "build", "numbers.json"), "utf8"));
+const OUT = path.join(process.env.OUT_DIR || path.join(HERE, "out"), "Response_to_Reviewers_Paper2017.docx");
 const T2 = N.table2_on;
 const O = N.over_off;
 const LV = ["low", "medium", "high"];
@@ -49,7 +50,7 @@ function item(label, comment, response, changes, status) {
   return [new Table({ width: { size: W, type: WidthType.DXA }, columnWidths: [W], rows }), P("", { after: 160 })];
 }
 
-const otherHeading = H("Other comments received (conference system reviews)");
+const otherHeading = H("Conference-system reviews (CMT Reviewer #1 and Reviewer #2)");
 const children = [
   new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 },
     children: [new TextRun({ text: "Response to Reviewers", font: FONT, size: 32, bold: true })] }),
@@ -58,6 +59,7 @@ const children = [
     "in the revised manuscript (section, table and figure numbers refer to the revised version). Every number in the " +
     "revised paper is produced by scripts in the public repository (github.com/shivam-G05/Smart-Traffic-Management): " +
     "scripts/benchmark.py (Tables II, V and X), scripts/oversaturation.py (Tables III, IV and X, Fig. 4), " +
+    "scripts/peak_period.py (Fig. 5), scripts/sensing.py (Tables XI-XII), scripts/calibrate_weights.py (Table XIII), " +
     "scripts/ablation.py (Table VI), scripts/vision_eval.py (Tables VII and VIII) and scripts/kinematics_check.py " +
     "(Table IX)."),
   P("The revision changes one of the paper's conclusions, and we state this plainly: when compared with stronger " +
@@ -112,35 +114,51 @@ const children = [
     "Sec. IV-A now says so. The manuscript was edited throughout for consistent terminology, units and table/figure " +
     "references.",
     ["Sec. VI-B: limitations rewritten.", "Sec. IV-A: arrival model corrected; above-capacity simulation options described.",
-      "Whole manuscript: language and formatting pass; test count updated (68 → 101)."],
+      "Whole manuscript: language and formatting pass; test count updated (68 → 119)."],
     "Addressed. We would welcome the reviewers' check of the language in the final version."),
 
   otherHeading,
-  P("For completeness we list the comments received through the conference system and how far the current revision " +
-    "addresses them."),
+  P("The reviews received through the conference system overlap with the e-mailed comments above; each is answered " +
+    "here with its own changes."),
   ...item("CMT Reviewer #1 (1)", "Compare with stronger baselines such as optimized fixed-time and max-pressure control.",
     "Done together with Comment 1.2 above (Webster-optimized fixed plan, max-pressure, actuated and three-level density control).",
     ["Sec. IV-E, V-C, V-D; Tables II–IV; Fig. 4."], "Addressed."),
   ...item("CMT Reviewer #1 (2)", "Clarify the limited AI/ML contribution.",
-    "The revised Introduction and Related Work state explicitly that the controller is a transparent rule-based method, " +
-    "not a learned one, and position the contribution as the evaluation, the safety properties and the discharge-hold " +
-    "rule. The machine-learning components (Haar cascade, Kalman/Hungarian tracking) are confined to the vision " +
-    "pipeline, whose measured accuracy is reported.",
-    ["Sec. I (novelty paragraph), Sec. II-A."], "Partly addressed: no learned component was added to the controller in this revision."),
+    "The Introduction now states the role of AI and machine learning plainly: the signal controller is a transparent " +
+    "rule, not a learned policy; machine learning enters through the pre-trained Haar-cascade detector, whose accuracy, " +
+    "failure cases and ablations are measured (Sec. V-G), and through a new data-driven calibration of the controller's " +
+    "parameters by search on tuning seeds with evaluation on held-out seeds (Sec. V-J). We chose to report this " +
+    "honestly rather than add a learned controller whose behavior could not be bounded the way rule (5) can.",
+    ["Sec. I (novelty paragraph and contributions).", "Sec. V-G (vision evaluation), Sec. V-J (data-driven calibration)."],
+    "Addressed by clarification and the calibration; no learned control policy was added."),
   ...item("CMT Reviewer #1 (3)", "Address the gap between ideal simulator sensing and the low-performing vision pipeline.",
-    "The gap is stated in the abstract, Sec. III, Sec. V-G and the limitations.",
-    ["Abstract, Sec. V-G, Sec. VI-B."],
-    "Partly addressed: an experiment that feeds the controller degraded (noisy) detections is planned but not yet included."),
-  ...item("CMT Reviewer #1 (4) and Reviewer #2", "Evaluate oversaturated and more realistic traffic conditions; conduct experiments above capacity, including queue growth, spillback, throughput and delay.",
-    "We measured each controller's capacity and swept demand from 0.6 to 1.5 times the fixed-time capacity with ten paired " +
-    "seeds per level, keeping blocked arrivals in an entry queue so that unserved demand is measured. We report " +
-    "throughput, delay including vehicles still waiting, queue growth and spillback.",
-    ["Sec. IV-A (simulation options), IV-D (discharge hold), V-D; Tables III–IV; Fig. 4."],
-    "Addressed for oversaturation. Turning traffic and stochastic arrivals remain future work (Sec. VI-B)."),
+    "We added an experiment in which the controllers see the junction through a sensor model instead of exact states: " +
+    "a camera's 60 m view refreshed at 2 Hz without vehicle classes, recall from 100% down to 30%, phantom detections " +
+    "at fixed spots, and finally the measured Haar pipeline. " + senseSummary(),
+    ["Sec. V-I (new), Tables XI–XII.", "Sec. VI-B: sensing limitation rewritten with these results."],
+    "Addressed."),
+  ...item("CMT Reviewer #1 (4) and Reviewer #2", "The tested demand levels are below capacity; throughput changes are very small and conclusions about congestion management are limited. Conduct experiments above capacity, including queue growth, spillback, throughput and delay.",
+    "We agree: the original three levels were only " +
+    `${(1152 / O.capacity.fixed.mean * 100).toFixed(0)}–${(2592 / O.capacity.fixed.mean * 100).toFixed(0)}% of capacity, which ` +
+    "is why throughput could not differ. The revision adds three experiments. (a) Capacity: every controller's capacity " +
+    "was measured by flooding all approaches (Table III). (b) A steady sweep from 0.6 to 1.5 times the fixed-time " +
+    "capacity, ten paired seeds per level, with blocked arrivals kept in an entry queue so that unserved demand is " +
+    "measured; we report throughput, served share, delay including vehicles still waiting, queue growth rate, final " +
+    "queue and spillback (Table IV, Fig. 4). (c) A 60-minute peak period in which demand rises to 1.2 times capacity and " +
+    "falls back, reporting the queue over time, the peak queue, the time to clear the queue after the peak, spillback " +
+    "duration, peak throughput and total delay (Fig. 5). " + peakSummary() + " These experiments exposed a failure of " +
+    "the original density rule near capacity, which the new discharge-hold rule (Sec. IV-D) corrects.",
+    ["Sec. IV-A (entry queue and entry speed for these runs), IV-D (discharge hold).",
+      "Sec. V-D: capacity (Table III), steady sweep (Table IV, Fig. 4) and peak period (Fig. 5).",
+      "Abstract, Sec. VI-A and VII: conclusions about congestion management rewritten."],
+    "Addressed. Turning traffic and stochastic arrivals remain future work (Sec. VI-B)."),
   ...item("CMT Reviewer #1 (5)", "Provide stronger validation/calibration of the heuristic density weights.",
-    "The extended ablation measures each part of the score separately and shows that the class weights, as set, do not " +
-    "improve delay. Calibration against local passenger-car-unit factors is stated as required.",
-    ["Sec. V-F, Table VI; Sec. VI-B."], "Partly addressed: calibration of the weights is not yet done."),
+    "Two analyses were added. The extended ablation (Table VI) measures each part of the score separately: the " +
+    "queued/moving distinction carries the benefit, while the hand-set class weights do not help. The weights were then " +
+    "calibrated from data: a random search over the class weights, the queued/moving ratio and θ on tuning seeds " +
+    `${N.calibration.tune_seeds[0]}–${N.calibration.tune_seeds[N.calibration.tune_seeds.length - 1]}, with the best setting compared against the hand-set weights on held-out seeds 1–10. ` + calibSummary(),
+    ["Sec. V-F, Table VI (ablation).", "Sec. V-J (new), Table XIII (calibration and held-out test).", "Sec. VI-B."],
+    "Addressed in simulation; calibration against field data remains future work."),
 ];
 
 // Reviewer 2 (e-mail) — placed after Reviewer 1 in the document
@@ -158,16 +176,20 @@ const reviewer2 = [
   ...item("Comment 2.1", "Validate kinematic outputs against external ground truth, not only detector mAP.",
     "We validated two kinds of kinematic output. (a) The tracker's speed estimates: for every confirmed track on a real " +
     "vehicle, the Kalman velocity was compared with the vehicle's true speed" +
-    (trk0.speed_mae !== null ? ` (mean absolute error ${trk0.speed_mae.toFixed(2)} m/s over ${trk0.speed_n} estimates, ` +
-      `mean true speed ${trk0.true_speed_mean.toFixed(2)} m/s; Table VIII)` : "") + ". " +
+    (trk0.speed_mae !== null ? ` (Table VIII). The result is negative and reported as such: the mean absolute error ` +
+      `was ${trk0.speed_mae.toFixed(2)} m/s over ${trk0.speed_n} estimates, but the vehicles concerned moved at only ` +
+      `${trk0.true_speed_mean.toFixed(2)} m/s on average, because tracks are confirmed almost only on queued vehicles; ` +
+      "the pipeline therefore provides no usable kinematics for moving traffic" : "") + ". " +
     "(b) The simulator's own kinematics against external field values: we measured queue discharge at the stop line as " +
     "a traffic engineer would and compared it with the Highway Capacity Manual's base saturation flow (1900 veh/h/lane, " +
     `1.89 s headway). This revealed that the model discharged cars every ${kc0.saturation_headway_s.toFixed(2)} s, far too ` +
     "fast, because its car-following rule had no driver reaction time. We added a reaction time, calibrated it to 1.6 s " +
     `(${kc1.saturation_headway_s.toFixed(2)} s, ${kc1.saturation_flow_vphpl} veh/h/lane), and repeated all main comparisons ` +
     `with the calibrated model: below capacity the adaptive controller reduced delay by ${reduCal("adaptive")} relative ` +
-    `to the fixed plan, and the discharge hold reached ${pct(OC.capacity.adaptive_hold.vs_fixed.pct)} of the fixed plan's ` +
-    "capacity (Table X).",
+    "to the fixed plan. The calibration also revealed that the discharge hold's 10 m stop-line zone, chosen for the old " +
+    `kinematics, is too short for realistic vehicle spacing (capacity ${pct(OC.capacity.adaptive_hold.vs_fixed.pct)} ` +
+    `relative to fixed timing); re-tuned on a separate seed to ${N.zone_cal.tuning.best_zone_m} m it reached ` +
+    `${pct(N.zone_cal.over.capacity.adaptive_hold.vs_fixed.pct)} (Table X). We report both.`,
     ["Sec. IV-A: reaction time introduced as an option of rule (1).", "Sec. V-G and Table VIII: tracked-speed error against ground truth.",
       "Sec. V-H (new), Tables IX–X: queue discharge against HCM values, calibration, repeated comparisons.", "Sec. VI-B: kinematics limitation rewritten."],
     "Addressed."),
@@ -198,6 +220,37 @@ const reviewer2 = [
     ["Abstract, Sec. IV-A, V-C, V-H, VI, VII."], "Addressed."),
 ];
 children.splice(children.findIndex((c) => c === otherHeading), 0, ...reviewer2);
+
+
+// Summaries for the conference-system items (imperfect sensing, calibration)
+function senseSummary() {
+  const conds = Object.keys(N.sensing);
+  const near = N.sensing[conds[1]], med = N.sensing[conds[0]];
+  const row = (cond, n) => cond.rows.find((r) => r.sensing.startsWith(n)).adaptive_hold;
+  const haar = med.rows.find((r) => r.sensing.startsWith("Measured Haar"));
+  return `Near capacity the discharge-hold controller's delay rose from ${row(near, "Exact").mean.toFixed(1)} s (exact ` +
+    `states) to ${row(near, "Camera").mean.toFixed(1)} s with a perfect camera view and ${row(near, "recall 50%").mean.toFixed(1)} s ` +
+    `at 50% recall (fixed plan ${near.fixed_mean.toFixed(1)} s); phantom detections near the stop line kept greens at the ` +
+    "maximum" + (haar ? `, and with the measured pipeline delay was ${haar.adaptive_hold.mean.toFixed(1)} s at medium ` +
+    `demand against ${med.fixed_mean.toFixed(1)} s for the fixed plan` : "") + ". The paper now states the detector " +
+    "quality needed before the loop can be closed.";
+}
+function peakSummary() {
+  const P = N.peak;
+  const rec = (c) => {
+    const r = P[c].recovery_min;
+    return r.not_recovered === r.runs ? "did not clear it within the hour" : `cleared it ${r.mean.toFixed(1)} min after the peak`;
+  };
+  return `In the peak period the queue reached ${P.fixed.peak_queue.mean.toFixed(0)} vehicles under fixed timing and ` +
+    `${P.adaptive_hold.peak_queue.mean.toFixed(0)} with the discharge hold; fixed timing ${rec("fixed")}, the hold ` +
+    `${rec("adaptive_hold")}, and the original density rule ${rec("adaptive")}.`;
+}
+function calibSummary() {
+  const h = N.calibration.held_out.Calibrated;
+  return "On the held-out seeds the calibrated score changed delay by " +
+    Object.entries(h).map(([c, v]) => `${pct(v.change_pct)} (${c}, p ${v.p < 0.001 ? "< 0.001" : v.p.toFixed(3)})`).join(", ") +
+    " relative to the hand-set weights.";
+}
 
 const doc = new Document({
   styles: { default: { document: { run: { font: FONT, size: 22 } } } },

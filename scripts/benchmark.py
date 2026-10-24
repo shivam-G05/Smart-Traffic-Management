@@ -37,6 +37,7 @@ from experiment_common import (  # noqa: E402
     CONTROLLERS,
     TrialResult,
     TrialSpec,
+    zone_options,
     fmt_change,
     fmt_ci,
     mean_or_nan,
@@ -115,12 +116,13 @@ def run_benchmark(levels: dict[str, float], seeds: list[int], duration_s: float,
                   preemption: bool = True, jobs: int | None = None, dt: float = 0.05,
                   controllers: tuple[str, ...] = CONTROLLERS,
                   reaction_time_s: float = 0.0,
-                  saturation_flow_vph: float | None = None) -> dict[str, dict[str, list[TrialMetrics]]]:
+                  saturation_flow_vph: float | None = None,
+                  hold_zone_m: float | None = None) -> dict[str, dict[str, list[TrialMetrics]]]:
     """Returns {level: {controller: [metrics per seed]}}."""
     specs = [
         TrialSpec(controller=c, seed=s, spawn_rate_per_s=rate, duration_s=duration_s,
                   dt=dt, preemption=preemption, reaction_time_s=reaction_time_s,
-                  saturation_flow_vph=saturation_flow_vph)
+                  saturation_flow_vph=saturation_flow_vph, options=zone_options(c, hold_zone_m))
         for rate in levels.values() for c in controllers for s in seeds
     ]
     results = iter(run_trials(specs, jobs=jobs))
@@ -168,7 +170,7 @@ def format_table(table: dict, levels: dict[str, float], duration_s: float, n_see
 
 
 def write_csv(path: Path, table: dict, levels: dict[str, float], seeds: list[int]) -> None:
-    with path.open("w", newline="") as f:
+    with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["level", "spawn_rate_per_s", "seed", "controller", *TrialMetrics.__dataclass_fields__])
         for level, rate in levels.items():
@@ -198,6 +200,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--no-preemption", action="store_true", help="run every controller without preemption")
     parser.add_argument("--reaction-time", type=float, default=0.0,
                         help="driver reaction time in s (default 0, the paper's model; see scripts/kinematics_check.py)")
+    parser.add_argument("--hold-zone", type=float, default=None,
+                        help="stop-line zone in m for the gap-out controllers (default 10; see scripts/tune_zone.py)")
     parser.add_argument("--saturation-flow", type=float, default=None,
                         help="veh/h per approach for the Webster baseline (default: decision_engine/webster.py)")
     parser.add_argument("--jobs", type=int, default=None, help="parallel processes (default: all CPU cores)")
@@ -209,7 +213,7 @@ def main(argv: list[str] | None = None) -> None:
     preemption = not args.no_preemption
     table = run_benchmark(args.levels, seeds, args.duration, preemption=preemption, jobs=args.jobs,
                           controllers=args.controllers, reaction_time_s=args.reaction_time,
-                          saturation_flow_vph=args.saturation_flow)
+                          saturation_flow_vph=args.saturation_flow, hold_zone_m=args.hold_zone)
     if args.reaction_time:
         print(f"Driver reaction time: {args.reaction_time:g} s (calibrated kinematics)")
         print()

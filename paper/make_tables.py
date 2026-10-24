@@ -31,7 +31,7 @@ CONTROLLERS = list(CONTROLLER_LABELS)
 
 
 def read(name):
-    with (RESULTS / name).open(newline="") as f:
+    with (RESULTS / name).open(newline="", encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
@@ -71,12 +71,12 @@ def ordered(rows):
 
 # --- Table II (paper demand levels, all controllers) ---------------------
 
-def table2(name):
+def table2(name, controllers=tuple(CONTROLLERS)):
     rows = by(read(name), "level", "controller")
     metrics = {"mean_delay_s": 2, "p95_delay_s": 1, "mean_queue": 2, "high_density_pct": 1,
                "throughput_vph": 0, "mean_green_s": 1}
     out = {}
-    for c in CONTROLLERS:
+    for c in controllers:
         out[c] = {}
         for lv in LEVELS:
             runs = ordered(rows[(lv, c)])
@@ -88,7 +88,7 @@ def table2(name):
                             "vs_fixed": change_text([f(r[m]) for r in base], vals)}
             out[c][lv] = entry
     adaptive = {lv: ordered(rows[(lv, "adaptive")]) for lv in LEVELS}
-    for c in CONTROLLERS:  # every controller against the paper's adaptive controller
+    for c in controllers if "adaptive" in controllers else ():  # every controller against the paper's adaptive one
         for lv in LEVELS:
             out[c][lv]["mean_delay_s"]["vs_adaptive"] = change_text(
                 [f(r["mean_delay_s"]) for r in adaptive[lv]], [f(r["mean_delay_s"]) for r in ordered(rows[(lv, c)])])
@@ -166,7 +166,7 @@ def oversat(name):
     for ratio in ratios:
         sweep[ratio] = {}
         base = ordered(sweep_rows[(ratio, "fixed")])
-        for c in CONTROLLERS:
+        for c in CONTROLLERS:  # skipped below when the file has no runs for c
             runs = ordered(sweep_rows[(ratio, c)])
             if not runs:
                 continue
@@ -179,6 +179,63 @@ def oversat(name):
             sweep[ratio][c] = entry
     safety = {"runs": len(rows), "violations": int(sum(f(r["safety_violations"]) for r in rows))}
     return {"capacity": capacity, "sweep": sweep, "ratios": ratios, "safety": safety}
+
+
+def sensing():
+    """{condition: {"fixed": mean, "rows": [{"sensing", controller -> {mean, ci, vs_exact}}]}}"""
+    rows = read("sensing.csv")
+    out = {}
+    for cond in dict.fromkeys(r["condition"] for r in rows):
+        sub = [r for r in rows if r["condition"] == cond]
+        groups = by(sub, "sensing", "controller")
+        fixed = [f(r["delay_s"]) for r in ordered(groups[("none", "fixed")])]
+        names = [n for n in dict.fromkeys(r["sensing"] for r in sub) if n != "none"]
+        ctrls = [c for c in dict.fromkeys(r["controller"] for r in sub) if c != "fixed"]
+        table = []
+        for name in names:
+            entry = {"sensing": name}
+            for c in ctrls:
+                vals = [f(r["delay_s"]) for r in ordered(groups[(name, c)])]
+                exact = [f(r["delay_s"]) for r in ordered(groups[("Exact states", c)])]
+                entry[c] = {"mean": round(statistics.mean(vals), 2), "ci": ci(vals, 1),
+                            "vs_exact": change_text(exact, vals), "vs_fixed": change_text(fixed, vals)}
+            table.append(entry)
+        out[cond] = {"fixed": ci(fixed, 1), "fixed_mean": statistics.mean(fixed), "controllers": ctrls, "rows": table}
+    return out
+
+
+def peak(name):
+    """{controller: {metric: {mean, ci}}, recovery counts, total delay vs fixed}"""
+    rows = by(read(name), "controller")
+    base = [f(r["total_delay_veh_h"]) for r in ordered(rows[("fixed",)])]
+    out = {}
+    for c in CONTROLLERS:
+        runs = ordered(rows[(c,)])
+        entry = {}
+        for m, d in (("peak_queue", 0), ("spillback_approach_min", 1), ("peak_throughput_vph", 0),
+                     ("mean_delay_s", 1), ("total_delay_veh_h", 0)):
+            vals = [f(r[m]) for r in runs]
+            entry[m] = {"mean": round(statistics.mean(vals), 2), "ci": ci(vals, d)}
+        rec = [f(r["recovery_min"]) for r in runs]
+        ok = [v for v in rec if not math.isnan(v)]
+        entry["recovery_min"] = {"mean": round(statistics.mean(ok), 2) if ok else None,
+                                 "ci": ci(ok, 1) if len(ok) > 1 else None,
+                                 "not_recovered": len(rec) - len(ok), "runs": len(rec)}
+        entry["total_delay_vs_fixed"] = change_text(base, [f(r["total_delay_veh_h"]) for r in runs])
+        out[c] = entry
+    return out
+
+
+def _no_nan(x):
+    """JSON has no NaN: undefined values (e.g. a change relative to a zero
+    baseline) are written as null."""
+    if isinstance(x, float) and math.isnan(x):
+        return None
+    if isinstance(x, dict):
+        return {k: _no_nan(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_no_nan(v) for v in x]
+    return x
 
 
 def audit_violations(md_name):
@@ -206,6 +263,14 @@ def main():
         "ablation": abl,
         "over_off": over_off, "over_on": over_on, "over_cal": over_cal,
         "vision": json.loads((RESULTS / "vision_eval.json").read_text(encoding="utf-8")),
+        "sensing": sensing(),
+        "zone_cal": {
+            "tuning": json.loads((RESULTS / "zone_tuning_calibrated.json").read_text(encoding="utf-8")),
+            "over": oversat("oversaturation_calibrated_zone.csv"),
+            "table2": table2("table2_calibrated_zone.csv", ("fixed", "webster", "actuated", "adaptive_hold"))[0],
+        },
+        "peak": peak("peak_period.csv"),
+        "calibration": json.loads((RESULTS / "calibration.json").read_text(encoding="utf-8")),
         "kinematics": {
             "tau0": json.loads((RESULTS / "kinematics_tau0.json").read_text(encoding="utf-8")),
             "tau16": json.loads((RESULTS / "kinematics_tau1.6.json").read_text(encoding="utf-8")),
@@ -216,16 +281,29 @@ def main():
             "over_off": over_off["safety"], "over_on": over_on["safety"], "over_cal": over_cal["safety"],
         },
     }
+    sensing_runs = len(read("sensing.csv"))
+    sensing_violations = audit_violations("sensing.md")
+    zone_t2_safety = table2("table2_calibrated_zone.csv", ("fixed", "webster", "actuated", "adaptive_hold"))[1]
+    tuning = numbers["zone_cal"]["tuning"]
+    zone_runs = zone_t2_safety["runs"] + numbers["zone_cal"]["over"]["safety"]["runs"] + tuning["runs"]
+    zone_violations = (zone_t2_safety["violations"] + numbers["zone_cal"]["over"]["safety"]["violations"]
+                       + tuning["violations"])
+    peak_runs = len(read("peak_period.csv"))
+    peak_violations = audit_violations("peak_period.md")
+    calib = numbers["calibration"]
     total_runs = (safety_on["runs"] + safety_off["runs"] + safety_cal["runs"] + len(abl_runs)
-                  + over_off["safety"]["runs"] + over_on["safety"]["runs"] + over_cal["safety"]["runs"])
+                  + over_off["safety"]["runs"] + over_on["safety"]["runs"] + over_cal["safety"]["runs"]
+                  + sensing_runs + calib["runs"] + peak_runs + zone_runs)
     total_violations = (safety_on["violations"] + safety_off["violations"] + safety_cal["violations"] + abl_violations
                         + over_off["safety"]["violations"] + over_on["safety"]["violations"]
-                        + over_cal["safety"]["violations"])
+                        + over_cal["safety"]["violations"] + sensing_violations + calib["violations"]
+                        + peak_violations + zone_violations)
     numbers["safety"]["total_runs"] = total_runs
-    numbers["safety"]["total_hours"] = total_runs * 0.5
+    # every run is 30 min except the 60-min peak-period runs
+    numbers["safety"]["total_hours"] = (total_runs - peak_runs) * 0.5 + peak_runs * 1.0
     numbers["safety"]["total_violations"] = total_violations
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(numbers, indent=1, ensure_ascii=False), encoding="utf-8")
+    OUT.write_text(json.dumps(_no_nan(numbers), indent=1, ensure_ascii=False, allow_nan=False), encoding="utf-8")
     print("wrote", OUT, "-", total_runs, "runs,", total_violations, "violations")
 
 

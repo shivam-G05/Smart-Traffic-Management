@@ -1225,157 +1225,111 @@ correctly, REST calls relative, no `127.0.0.1:8000` left in the bundle),
 parsing into `Settings`, and `gpio_driver.py` in `--dry-run` mirroring the live
 backend (including the failsafe when the backend was stopped).
 
-## Experiments — fixed vs. adaptive
+## Experiments — controllers, baselines and validation
 
-Two headless experiment scripts back the paper's results. Both run the
-controllers against identical seeded traffic (runs with the same seed are
-matched pairs), use every CPU core, and report mean ± 95% confidence
-interval over seeds with paired t-tests. Shared machinery (one trial, the
-per-vehicle recorder, the statistics) is in `scripts/experiment_common.py`;
-`tests/test_experiments.py` keeps it all runnable.
+Every number in the revised paper comes from the headless scripts below.
+They run controllers against identical seeded traffic (runs with the same
+seed are matched pairs), use every CPU core, report mean ± 95% confidence
+interval with paired t-tests, and check every simulation step with the
+signal-safety audit (`simulation/signal_audit.py`). Their full outputs are
+committed in [`results/`](results/); the paper is built from those files
+(see "The paper" below). Shared machinery is in
+`scripts/experiment_common.py`; `tests/test_experiments.py`,
+`tests/test_baselines.py` and `tests/test_sensing.py` keep it runnable.
 
-Three controllers are compared, all built by
-`backend/app/core/controller_factory.py` (`--controllers` picks a subset,
-fixed first):
+| Script | What it produces | Output in `results/` |
+|---|---|---|
+| `scripts/benchmark.py` | Paper's Table II method, all controllers, three demands below capacity; emergency-vehicle delays | `table2_preemption_on/off.*`, `table2_calibrated.*` |
+| `scripts/oversaturation.py` | Capacity of each controller and a 0.6–1.5x capacity sweep | `oversaturation_preemption_off/on.*`, `oversaturation_calibrated.*` |
+| `scripts/peak_period.py` | 60-min rush hour (0.6x → 1.2x → 0.6x capacity): queue over time, peak queue, recovery time, spillback | `peak_period*.*` |
+| `scripts/ablation.py` | Ten-variant ablation of the adaptive controller (Table VI) | `ablation.*` |
+| `scripts/vision_eval.py` | Detector/tracker accuracy, failure cases, tracked-speed error, ablations | `vision_eval.*` |
+| `scripts/kinematics_check.py` | Queue discharge vs Highway Capacity Manual values | `kinematics_tau0.*`, `kinematics_tau1.6.*` |
+| `scripts/sensing.py` | Controllers behind a sensor model, down to the measured detector | `sensing.*` |
+| `scripts/calibrate_weights.py` | Data-driven calibration of the density score, held-out test | `calibration.*` |
+
+### Controllers
+
+All are built by `backend/app/core/controller_factory.py`. The comparison
+baselines re-implement published strategies (they are not the original
+systems) and share the adaptive controller's phase sequence, 3 s yellow,
+1 s all-red and 8–45 s green limits (`decision_engine/baselines.py`), so
+every one obeys the same 50 s maximum red and passes the safety audit.
 
 | Name | Controller |
 |---|---|
-| `fixed` | Fixed-time, 20 s greens (Milestone 1) |
+| `fixed` | Fixed time, 20 s greens (Milestone 1) |
+| `webster` | Fixed plan timed by Webster's formula for each run's mean demand (`decision_engine/webster.py`) |
+| `actuated` | Vehicle-actuated: green ends when the stop-line zone gaps out and the other side is waiting |
+| `max_pressure` | Max-pressure (Varaiya): serve the direction with more vehicles waiting |
+| `density_levels` | Three-level density classes (low/medium/high → 10/20/30 s), as Nsofwa & Tembo |
 | `adaptive` | Density-based green extension, as evaluated in the paper (Milestone 5) |
-| `adaptive_hold` | The same, plus **discharge hold** (below) |
+| `adaptive_hold` | The same plus the **discharge hold** (below); `STMS_CONTROLLER_TYPE=adaptive_hold` runs it on the dashboard |
 
-### Discharge hold
+**Discharge hold.** The original adaptive rule ends a green once the served
+direction's density score no longer beats the waiting direction's by 10%.
+When both directions are saturated, the stopped queue on red (weight 1.5)
+soon outweighs the vehicles moving through on green (0.5), so greens end at
+the 8 s minimum and each phase change wastes 4 s on yellow and all-red: the
+rule loses ~19% of capacity. `AdaptiveController(hold_while_discharging=True)`
+adds the gap-out test of actuated control: past the minimum, a green can
+only end once no served vehicle is within 10 m of the stop line *and* the
+density rule agrees. The 10 m zone was chosen from 10/15/20/30 m on tuning
+seed 1000, kept apart from the evaluation seeds.
 
-The original adaptive rule ends a green (after the 8 s minimum) once the
-served direction's density score no longer beats the waiting direction's
-by 10%. Above capacity that backfires: when both directions are saturated,
-the stopped queue on red (weight 1.5 per vehicle) soon outweighs the
-vehicles moving through on green (0.5), so greens end at the 8 s minimum
-and every phase change spends 4 s on yellow and all-red. The original rule
-loses 19% of capacity this way (table below).
+### Headline results (exact vehicle states, default model)
 
-`AdaptiveController(hold_while_discharging=True)` adds the gap-out rule
-actuated signals use: past the minimum, a green can only end once the
-served direction has **gapped out** — no vehicle within 10 m of its stop
-line (`DISCHARGE_ZONE_M`) — *and* the density rule agrees. A saturated
-queue moving off always keeps a vehicle at the line, so it keeps its green
-up to the 45 s maximum; free-flowing arrivals cross 10 m in under a second,
-so a cleared queue still hands over early. The 10 m zone was chosen from
-10 / 15 / 20 / 30 m on a tuning seed (1000) kept apart from the evaluation
-seeds (1–10, capacity 101–105); larger zones held greens too long at
-0.8–1.0x capacity. Yellow, all-red, minimum and maximum green are
-unchanged, so the paper's 50 s maximum-red bound still holds.
+- **Below capacity (Table II method)** every demand-responsive controller
+  cuts delay by roughly 35–40% against the 20 s fixed plan — Webster,
+  actuated and max-pressure as much as (slightly more than) the adaptive
+  controller. The gain comes mostly from replacing an untuned plan.
+  Three-level density control is worse than fixed at medium and high
+  demand. The fixed and adaptive rows reproduce the paper's Table II and
+  Table III exactly.
+- **Capacity** (preemption off): fixed 10,008 veh/h; Webster +11.6%,
+  adaptive + hold +9.8%, actuated +9.6%, density levels +6.3%; the
+  original adaptive rule and max-pressure −19%. Near and above capacity the
+  hold and actuated control give the lowest delays; the original rule's
+  delay explodes from 0.9x capacity.
+- **Ablation**: the queued/moving distinction carries the score's benefit
+  (removing it: +33–35% delay); the hand-set class weights do not help.
+- **Safety**: zero change-interval violations in every run of every script.
 
-The live dashboard can run it with `STMS_CONTROLLER_TYPE=adaptive_hold`;
-the default is still `fixed`.
+See the files in `results/` for every table with confidence intervals and
+p-values.
 
-### `scripts/benchmark.py` — the paper's Table II
+### Simulation options used only by the experiments
 
-```bash
-python scripts/benchmark.py                   # ~2-5 min: 3 demand levels x 10 seeds x 30 min, 3 controllers
-python scripts/benchmark.py --no-preemption   # same without emergency preemption
-python scripts/benchmark.py --controllers fixed,adaptive   # just the paper's two
-python scripts/benchmark.py --csv results.csv # also write every seed's metrics
-python scripts/benchmark.py --duration 300 --seeds 3   # quick check
-```
+All default to off, so the dashboard and the paper's main results are
+unchanged.
 
-Follows the paper's method (Section V-A): λ = 0.08 / 0.12 / 0.18 arrivals/s
-per approach, 1800 s runs with a 60 s warm-up, delay measured over vehicles
-entering between 60 s and 1650 s (all of which leave before the run ends),
-stopped delay = time upstream of the stop line below 0.5 m/s. The fixed and
-adaptive rows reproduce Table II exactly:
+- `entry_backlog=True` (`Road`): a blocked arrival waits off-map instead of
+  being dropped, so unserved demand and spillback are measured; vehicle
+  types are drawn on arrival so paired runs see identical arrivals.
+- `insert_at_speed=True` (`Road`): enter at the fastest safe speed, so the
+  road entry does not cap flow below the signal's capacity.
+- `reaction_time_s` (`lane.safe_following_speed`): driver reaction time in
+  the safe-speed rule (Krauss). At 0 (default) the model is identical to
+  before; `scripts/kinematics_check.py` shows that queues then discharge far
+  too fast (cars ~0.5 s apart against the HCM's 1.89 s), and 1.6 s matches
+  the field value. `--reaction-time 1.6` repeats an experiment with it.
+- `demand_profile` (`Intersection`): (time, multiplier) points that scale
+  demand over time, e.g. the rush hour of `scripts/peak_period.py`.
+- `SensedController` / `SensorModel` (`decision_engine/sensing.py`): the
+  controller sees only what a camera would report (view, refresh rate,
+  recall, no classes, phantom detections).
 
-| Metric | Control | Low (1152 veh/h) | Medium (1728 veh/h) | High (2592 veh/h) |
-|---|---|---|---|---|
-| Mean stopped delay (s) | Fixed | 6.96 ± 0.17 | 7.20 ± 0.20 | 7.36 ± 0.22 |
-| | Adaptive | 4.49 ± 0.10 | 4.60 ± 0.14 | 4.76 ± 0.12 |
-| | Adaptive + hold | 4.44 ± 0.10 | 4.62 ± 0.16 | 4.89 ± 0.23 |
-| | Adaptive vs fixed | −35.5% | −36.1% | −35.3% |
-| | Adaptive + hold vs fixed | −36.3% | −35.8% | −33.7% |
-| 95th-pct. delay (s) | Fixed | 23.3 ± 0.3 | 23.5 ± 0.3 | 23.6 ± 0.3 |
-| | Adaptive | 13.7 ± 0.4 | 14.2 ± 0.6 | 14.8 ± 1.0 |
-| | Adaptive + hold | 13.8 ± 0.5 | 14.2 ± 0.5 | 15.3 ± 1.5 |
-| Time at high density (%) | Fixed | 10.1 ± 1.6 | 29.5 ± 2.3 | 70.6 ± 1.4 |
-| | Adaptive | 4.4 ± 1.4 | 15.2 ± 2.1 | 45.1 ± 2.5 |
-| | Adaptive + hold | 4.3 ± 1.3 | 15.3 ± 1.8 | 46.4 ± 3.0 |
-| Throughput (veh/h) | Fixed | 1152 ± 13 | 1724 ± 15 | 2548 ± 19 |
-| | Adaptive | 1150 ± 13 | 1714 ± 19 | 2545 ± 25 |
-| | Adaptive + hold | 1150 ± 13 | 1717 ± 22 | 2562 ± 27 |
+### The paper
 
-All delay changes p < 0.001; adaptive-vs-fixed throughput p = 0.38 / 0.03 /
-0.82, as in the paper. With `--no-preemption` the adaptive delay reduction
-is 38.7 / 40.0 / 41.9% (matching the paper's text) and adaptive + hold
-39.1 / 38.6 / 39.4%. **At these demand levels the discharge hold keeps the
-original controller's gain** (within ~1.6 points); both win by ending
-greens early once the served queue has cleared.
-
-### `scripts/oversaturation.py` — above capacity
+`paper/` builds the revised manuscript and the response to the reviewers as
+Word files, with every number read from `results/`:
 
 ```bash
-python scripts/oversaturation.py --no-preemption   # ~10-25 min: capacity runs + 6 demand levels x 10 seeds, 3 controllers
-python scripts/oversaturation.py                   # same with emergency preemption
-python scripts/oversaturation.py --ratios 0.9,1.1,1.3 --seeds 5
+python paper/make_figures.py        # figures -> paper/figures/
+python paper/make_tables.py         # numbers -> paper/build/numbers.json
+cd paper && npm install && npm run build   # -> paper/out/*.docx
+powershell -File to_pdf.ps1 out/Smart_Traffic_Control_revised.docx   # optional PDF via Word
 ```
-
-The paper's three demand levels turn out to be 12–27% of the junction's
-capacity, so they could not show congestion. This script first floods
-every approach to measure capacity, then sweeps demand from 0.6x to 1.5x
-the fixed-time capacity. It runs the simulation with two options that the
-dashboard and Table II do not use (`simulation/entities/road.py`):
-
-- `entry_backlog=True` — an arrival whose lane entry is blocked waits
-  off-map and enters when there is room, instead of being dropped, so
-  unserved demand, its waiting time and spillback are measured. It also
-  draws the vehicle type on arrival, so paired runs see exactly the same
-  arrivals (by default a dropped arrival skips its random draw, so paired
-  runs drift apart after the first drop).
-- `insert_at_speed=True` — a vehicle enters at the fastest speed from which
-  it can still stop behind the one ahead (as SUMO's `departSpeed="max"`).
-  Entering at rest caps the road entry below what the signal discharges, so
-  the entry rather than the junction would set the capacity (measured: 8,887
-  vs 9,533 veh/h, fixed-time, saturated).
-
-**Preemption off is the main condition here.** Emergency vehicles are 1%
-of arrivals, so at these demands one arrives every ~15–30 s and preemption
-keeps cutting greens for every controller (the fixed plan's greens average
-~16–17 s instead of 20 s with it on). Turning it off isolates the signal
-timing itself; the preemption-on results follow.
-
-Measured, preemption off (5 capacity seeds, 10 paired seeds per level):
-
-| Capacity | Fixed | Adaptive | Adaptive + hold |
-|---|---|---|---|
-| veh/h, junction | 10008 ± 89 | 8112 ± 155 (−18.9%) | **10988 ± 41 (+9.8%)** |
-| Mean green when saturated (s) | 20.0 | 8.0 | 37.6 |
-
-| Demand / fixed capacity | 0.6x | 0.8x | 0.9x | 1.0x | 1.2x | 1.5x |
-|---|---|---|---|---|---|---|
-| Delay incl. still waiting, fixed (s) | 6.4 | 7.7 | 8.9 | 12.2 | 115.3 | 312.2 |
-| Delay incl. still waiting, adaptive (s) | 4.6 | 10.1 | 41.5 | 148.7 | 298.2 | 440.1 |
-| Delay incl. still waiting, adaptive + hold (s) | **4.3** | **6.4** | **8.2** | **10.6** | **48.7** | **245.6** |
-| Adaptive + hold vs fixed | −33% | −16% | −8% | −13% (p 0.14) | −58% | −21% |
-| Throughput, fixed (veh/h) | 6022 | 8084 | 8937 | 9981 | 10352 | 10073 |
-| Throughput, adaptive (veh/h) | 6011 | 8038 | 8502 | 8308 | 8175 | 8141 |
-| Throughput, adaptive + hold (veh/h) | 6011 | 8057 | 8919 | 9972 | **11331** | **11090** |
-| Queue growth, fixed / adaptive / hold (veh/min) | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 5.6 / 0 | 0.2 / 28.9 / 0 | 26.9 / 62.8 / 8.6 | 82.5 / 113.7 / 65.3 |
-| Spillback, fixed / adaptive / hold (% approach-time) | 0 / 0 / 0 | 0 / 0.1 / 0 | 0 / 28.7 / 0 | 2.6 / 77.9 / 0.7 | 72.7 / 94.5 / 50.7 | 96.7 / 98.4 / 95.2 |
-| Mean green, fixed / adaptive / hold (s) | 20 / 8.8 / 10.7 | 20 / 8.3 / 13.6 | 20 / 8.1 / 16.5 | 20 / 8.1 / 21.6 | 20 / 8.0 / 36.8 | 20 / 8.1 / 39.3 |
-
-With preemption on, the same pattern holds with smaller margins, because
-preemption cuts the hold's long greens too: capacity 9701 (fixed) / 8861
-(adaptive, −8.7%) / 10012 (hold, +3.2%); hold-vs-fixed delay −25% / −16% /
-−12% / +5% (p 0.26) / −18% / −8% and throughput +2.8% / +3.5% at 1.2x /
-1.5x, against the original adaptive controller's +227% delay and −4.5% to
-−9.6% throughput at and above capacity.
-
-**Summary.** The original adaptive rule wins below ~0.8x capacity and loses
-badly from 0.9x up (up to 19% less capacity). Adding the discharge hold
-keeps the low-demand gain and turns the high-demand loss into a gain:
-lower delay than fixed timing at every tested level (significant at all but
-1.0x) and ~10% more capacity, because saturated queues get long greens
-(~37 s) instead of short ones. Full tables with confidence intervals,
-p-values, served share, final queue and first-spillback times are what the
-script prints.
 
 ### Model notes worth knowing before quoting these numbers
 
@@ -1383,13 +1337,11 @@ script prints.
   every 1/λ seconds (a deterministic headway); only the rate is redrawn,
   every 15 s, as λ·U(0.4, 1.6). The paper describes the arrivals as a
   Poisson process.
-- **The simulated saturation flow is high.** Capacity of ~10,000 veh/h at a
-  green share of ~0.4 means ~1.2 s headways per lane: the car-following
-  model has no reaction time or start-up lost time, and motorcycles (25% of
-  vehicles) count as full vehicles. Absolute capacities are therefore not
-  field values; the comparison between controllers is what these runs show.
-  With real start-up lost time, short greens would cost even more, so the
-  original adaptive rule's capacity loss is if anything understated.
+- **The default kinematics are too fast.** Without a reaction time, cars
+  discharge from a queue ~0.5 s apart (HCM: 1.89 s), so absolute capacities
+  are not field values. `--reaction-time 1.6` matches the field saturation
+  headway; the calibrated model still has no start-up delay, so its
+  start-up lost time is too low.
 - **Emergency vehicles are frequent** (1% of arrivals), far more than at a
   real junction, which is why the above-capacity results are reported with
   preemption off as well as on.
@@ -1439,13 +1391,14 @@ cd backend
 python -m pytest -q
 ```
 
-83 tests across `tests/test_simulation.py`, `tests/test_api.py`,
+119 tests across `tests/test_simulation.py`, `tests/test_api.py`,
 `tests/test_connection_manager.py`, `tests/test_vision.py`,
 `tests/test_tracker.py`, `tests/test_density.py`,
 `tests/test_adaptive_controller.py`, `tests/test_emergency_preemption.py`,
 `tests/test_analytics.py`, `tests/test_database.py`,
-`tests/test_comparison.py`, and `tests/test_experiments.py` — see each
-milestone section above for what's covered where.
+`tests/test_comparison.py`, `tests/test_experiments.py`,
+`tests/test_baselines.py` and `tests/test_sensing.py` — see each
+milestone section above and "Experiments" for what's covered where.
 
 ---
 

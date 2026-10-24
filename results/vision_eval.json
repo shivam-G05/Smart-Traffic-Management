@@ -1,0 +1,164 @@
+{
+ "seeds": [
+  1,
+  2,
+  3,
+  4
+ ],
+ "detectors": {
+  "Default (3x upscale, equalized)": {
+   "frames": 9600,
+   "gt_instances": 14874,
+   "precision": 4.136821179514689,
+   "precision_range": [
+    3.526513678205627,
+    5.60515873015873
+   ],
+   "recall": 8.202232082829097,
+   "recall_range": [
+    7.297447280799112,
+    9.846230158730158
+   ],
+   "detections_per_frame": 3.3011458333333334,
+   "ms_per_frame": 634.6581491979143
+  },
+  "2x upscale": {
+   "frames": 9600,
+   "gt_instances": 14874,
+   "precision": 63.318284424379236,
+   "precision_range": [
+    46.276595744680854,
+    78.01204819277109
+   ],
+   "recall": 3.711173860427592,
+   "recall_range": [
+    2.3307436182019976,
+    6.374007936507937
+   ],
+   "detections_per_frame": 0.09229166666666666,
+   "ms_per_frame": 273.200312041669
+  },
+  "No upscaling": {
+   "frames": 9600,
+   "gt_instances": 14874,
+   "precision": 100.0,
+   "precision_range": [
+    100.0,
+    100.0
+   ],
+   "recall": 0.013446282102998522,
+   "recall_range": [
+    0.0,
+    0.02796420581655481
+   ],
+   "detections_per_frame": 0.00020833333333333335,
+   "ms_per_frame": 84.09862025000083
+  },
+  "No histogram equalization": {
+   "frames": 9600,
+   "gt_instances": 14874,
+   "precision": 100.0,
+   "precision_range": [
+    100.0,
+    100.0
+   ],
+   "recall": 0.013446282102998522,
+   "recall_range": [
+    0.0,
+    0.027307482250136537
+   ],
+   "detections_per_frame": 0.00020833333333333335,
+   "ms_per_frame": 346.180035666668
+  }
+ },
+ "by_class": {
+  "car": {
+   "instances": 7888,
+   "recall": 7.061359026369169
+  },
+  "motorcycle": {
+   "instances": 3326,
+   "recall": 11.785929043896573
+  },
+  "auto": {
+   "instances": 1976,
+   "recall": 7.5910931174089065
+  },
+  "bus": {
+   "instances": 773,
+   "recall": 7.244501940491591
+  },
+  "truck": {
+   "instances": 769,
+   "recall": 7.672301690507152
+  },
+  "fire_truck": {
+   "instances": 135,
+   "recall": 3.7037037037037037
+  },
+  "ambulance": {
+   "instances": 7,
+   "recall": 14.285714285714286
+  }
+ },
+ "by_distance": {
+  "0-20 m": {
+   "instances": 11326,
+   "recall": 5.403496380010595
+  },
+  "20-40 m": {
+   "instances": 1783,
+   "recall": 16.881660123387547
+  },
+  "40-60 m": {
+   "instances": 1765,
+   "recall": 17.393767705382437
+  }
+ },
+ "tracking": {
+  "ByteTrack-style (two-stage, Kalman)": {
+   "coverage": 0.5983595535834342,
+   "track_precision": 0.7962780710387403,
+   "vehicles_confirmed": 1.5177065767284992,
+   "id_switches_per_100_vehicles": 0.16863406408094436,
+   "tracks_created": 392,
+   "speed_mae": 0.5270958815370606,
+   "speed_n": 82,
+   "true_speed_mean": 0.5619512195121952
+  },
+  "Single stage (low-confidence dropped)": {
+   "coverage": 0.45045045045045046,
+   "track_precision": 0.6025721737566327,
+   "vehicles_confirmed": 1.0118043844856661,
+   "id_switches_per_100_vehicles": 0.16863406408094436,
+   "tracks_created": 393,
+   "speed_mae": 0.1627686257691149,
+   "speed_n": 61,
+   "true_speed_mean": 0.16393442622950818
+  },
+  "No motion model (last box)": {
+   "coverage": 0.5983595535834342,
+   "track_precision": 0.7962780710387403,
+   "vehicles_confirmed": 1.5177065767284992,
+   "id_switches_per_100_vehicles": 0.16863406408094436,
+   "tracks_created": 392,
+   "speed_mae": null,
+   "speed_n": 0,
+   "true_speed_mean": null
+  },
+  "Confirm after 1 match": {
+   "coverage": 2.2589753933037513,
+   "track_precision": 2.921600829803786,
+   "vehicles_confirmed": 35.919055649241145,
+   "id_switches_per_100_vehicles": 6.57672849915683,
+   "tracks_created": 392,
+   "speed_mae": 0.5270958815370606,
+   "speed_n": 82,
+   "true_speed_mean": 0.5619512195121952
+  }
+ },
+ "failure": {
+  "false_positives": 30380,
+  "persistent_background_share": 98.61092824226465
+ }
+}

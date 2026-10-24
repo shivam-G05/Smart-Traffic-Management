@@ -21,6 +21,7 @@ class SimulationEngine:
         entry_backlog: bool = False,
         insert_at_speed: bool = False,
         reaction_time_s: float = 0.0,
+        demand_profile: tuple = (),
     ):
         # seed=None (default) reproduces today's behavior exactly: an
         # unseeded, non-reproducible Intersection. Milestone 9 passes a
@@ -34,6 +35,7 @@ class SimulationEngine:
             entry_backlog=entry_backlog,
             insert_at_speed=insert_at_speed,
             reaction_time_s=reaction_time_s,
+            demand_profile=demand_profile,
         )
         self.controller: SignalControllerBase = controller or FixedTimerController()
         self.sim_time_s = 0.0

@@ -64,6 +64,7 @@ from experiment_common import (  # noqa: E402
     CONTROLLERS,
     TrialResult,
     TrialSpec,
+    zone_options,
     fmt_change,
     fmt_ci,
     mean_ci,
@@ -145,18 +146,20 @@ def over_metrics(result: TrialResult, warmup_s: float = WARMUP_S,
 
 def _spec(controller: str, seed: int, rate: float, duration_s: float, dt: float,
           preemption: bool = True, reaction_time_s: float = 0.0,
-          saturation_flow_vph: float | None = None) -> TrialSpec:
+          saturation_flow_vph: float | None = None, hold_zone_m: float | None = None) -> TrialSpec:
     return TrialSpec(controller=controller, seed=seed, spawn_rate_per_s=rate, duration_s=duration_s,
                      dt=dt, preemption=preemption, entry_backlog=True, insert_at_speed=True,
-                     reaction_time_s=reaction_time_s, saturation_flow_vph=saturation_flow_vph)
+                     reaction_time_s=reaction_time_s, saturation_flow_vph=saturation_flow_vph,
+                     options=zone_options(controller, hold_zone_m))
 
 
 def measure_capacity(seeds: list[int], duration_s: float, saturation_rate: float, jobs: int | None,
                      dt: float = 0.05, preemption: bool = True,
                      controllers: tuple[str, ...] = CONTROLLERS,
                      reaction_time_s: float = 0.0,
-                     saturation_flow_vph: float | None = None) -> dict[str, list[OverMetrics]]:
-    specs = [_spec(c, s, saturation_rate, duration_s, dt, preemption, reaction_time_s, saturation_flow_vph)
+                     saturation_flow_vph: float | None = None,
+                     hold_zone_m: float | None = None) -> dict[str, list[OverMetrics]]:
+    specs = [_spec(c, s, saturation_rate, duration_s, dt, preemption, reaction_time_s, saturation_flow_vph, hold_zone_m)
              for c in controllers for s in seeds]
     results = iter(run_trials(specs, jobs=jobs))
     return {c: [over_metrics(next(results)) for _ in seeds] for c in controllers}
@@ -166,8 +169,9 @@ def run_sweep(rates: list[float], seeds: list[int], duration_s: float, jobs: int
               dt: float = 0.05, preemption: bool = True,
               controllers: tuple[str, ...] = CONTROLLERS,
               reaction_time_s: float = 0.0,
-              saturation_flow_vph: float | None = None) -> list[dict[str, list[OverMetrics]]]:
-    specs = [_spec(c, s, rate, duration_s, dt, preemption, reaction_time_s, saturation_flow_vph)
+              saturation_flow_vph: float | None = None,
+              hold_zone_m: float | None = None) -> list[dict[str, list[OverMetrics]]]:
+    specs = [_spec(c, s, rate, duration_s, dt, preemption, reaction_time_s, saturation_flow_vph, hold_zone_m)
              for rate in rates for c in controllers for s in seeds]
     results = iter(run_trials(specs, jobs=jobs))
     return [{c: [over_metrics(next(results)) for _ in seeds] for c in controllers} for _ in rates]
@@ -258,7 +262,7 @@ def format_report(capacity: dict[str, list[OverMetrics]], ratios: list[float], r
 def write_csv(path: Path, ratios, rates, seeds, sweep, capacity=None, capacity_seeds=(),
               saturation_rate=DEFAULT_SATURATION_RATE) -> None:
     names = [f.name for f in fields(OverMetrics)]
-    with path.open("w", newline="") as f:
+    with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["ratio", "spawn_rate_per_s", "seed", "controller", *names])
         for c, runs in (capacity or {}).items():  # ratio "capacity": the flooded capacity runs
@@ -285,6 +289,8 @@ def main(argv: list[str] | None = None) -> None:
                         help="comma-separated, fixed first (default: fixed,adaptive,adaptive_hold)")
     parser.add_argument("--reaction-time", type=float, default=0.0,
                         help="driver reaction time in s (default 0, the paper's model; see scripts/kinematics_check.py)")
+    parser.add_argument("--hold-zone", type=float, default=None,
+                        help="stop-line zone in m for the gap-out controllers (default 10; see scripts/tune_zone.py)")
     parser.add_argument("--saturation-flow", type=float, default=None,
                         help="veh/h per approach for the Webster baseline (default: decision_engine/webster.py)")
     parser.add_argument("--no-preemption", action="store_true",
@@ -299,11 +305,12 @@ def main(argv: list[str] | None = None) -> None:
     seeds = list(range(1, args.seeds + 1))
     capacity = measure_capacity(capacity_seeds, args.duration, args.saturation_rate, args.jobs,
                                 preemption=preemption, controllers=args.controllers, reaction_time_s=args.reaction_time,
-                                saturation_flow_vph=args.saturation_flow)
+                                saturation_flow_vph=args.saturation_flow, hold_zone_m=args.hold_zone)
     fixed_capacity_vph = statistics.mean(m.throughput_vph for m in capacity["fixed"])
     rates = [r * fixed_capacity_vph / (4 * 3600) for r in args.ratios]
     sweep = run_sweep(rates, seeds, args.duration, args.jobs, preemption=preemption, controllers=args.controllers,
-                      reaction_time_s=args.reaction_time, saturation_flow_vph=args.saturation_flow)
+                      reaction_time_s=args.reaction_time, saturation_flow_vph=args.saturation_flow,
+                      hold_zone_m=args.hold_zone)
     if args.reaction_time:
         print(f"Driver reaction time: {args.reaction_time:g} s (calibrated kinematics)")
         print()

@@ -66,7 +66,7 @@ function bullet(text, ref = "bullets") {
   });
 }
 
-const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"];
+const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV"];
 let sectionNo = 0;
 let subNo = 0;
 

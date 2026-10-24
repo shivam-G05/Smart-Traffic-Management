@@ -97,7 +97,7 @@ def format_table(table, levels: dict[str, float], duration_s: float, n_seeds: in
 
 
 def write_csv(path: Path, table, levels: dict[str, float], seeds: list[int]) -> None:
-    with path.open("w", newline="") as f:
+    with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["level", "variant", "seed", "mean_delay_s", "p95_delay_s", "mean_green_s", "throughput_vph"])
         for level in levels:

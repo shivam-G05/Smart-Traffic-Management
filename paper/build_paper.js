@@ -10,8 +10,9 @@ const {
 const I = require("./ieee");
 
 const HERE = __dirname;
-const N = JSON.parse(fs.readFileSync(path.join(HERE, "build", "numbers.json"), "utf8"));
-const OUT = path.join(HERE, "out", "Smart_Traffic_Control_revised.docx");
+// NUMBERS / OUT_DIR override the inputs and output folder (used for test builds).
+const N = JSON.parse(fs.readFileSync(process.env.NUMBERS || path.join(HERE, "build", "numbers.json"), "utf8"));
+const OUT = path.join(process.env.OUT_DIR || path.join(HERE, "out"), "Smart_Traffic_Control_revised.docx");
 const FIG = (name) => path.join(HERE, "figures", name);
 
 const L = N.labels;
@@ -31,6 +32,8 @@ const range = (vals) => {
   return a.toFixed(1) === b.toFixed(1) ? `${a.toFixed(1)}%` : `${a.toFixed(1)}–${b.toFixed(1)}%`;
 };
 const redu = (c) => range(LV.map((lv) => -d(c, lv).vs_fixed.pct));
+// For values that can have either sign: "between −6.8% and +2.9%".
+const between = (vals) => `between ${pct(Math.min(...vals))} and ${pct(Math.max(...vals))}`;
 const ratios = O.ratios;
 const sw = (r, c, m) => O.sweep[r][c][m];
 const swOn = (r, c, m) => Oon.sweep[r][c][m];
@@ -83,9 +86,14 @@ const abstractText =
   `${abspct(O.capacity.adaptive.vs_fixed.pct)} of capacity; a discharge-hold rule that keeps green while the served queue ` +
   `is still at the stop line restored it (${pct(O.capacity.adaptive_hold.vs_fixed.pct)} relative to fixed timing) and ` +
   "kept the low-demand benefit. An ablation shows that the queued/moving distinction, not the class weights, drives the " +
-  `score's benefit. A per-step audit of ${S.total_runs.toLocaleString("en-US")} runs found no conflicting greens or ` +
+  `score's benefit. With a driver reaction time calibrated to field saturation headways the comparisons hold, provided ` +
+  `the hold's stop-line zone is re-tuned to the wider vehicle spacing (${N.zone_cal.tuning.best_zone_m} m: ` +
+  `${pct(N.zone_cal.over.capacity.adaptive_hold.vs_fixed.pct)} capacity). A sensing study shows that the present detector ` +
+  "would make every controller worse than fixed timing near capacity. " +
+  `A per-step audit of ${S.total_runs.toLocaleString("en-US")} runs found no conflicting greens or ` +
   "shortened change intervals. Control uses simulated vehicle states: on synthetic frames the Haar-cascade detector " +
-  "reached only 6% precision and 9% recall.";
+  `reached only ${Object.values(N.vision.detectors)[0].precision.toFixed(0)}% precision and ` +
+  `${Object.values(N.vision.detectors)[0].recall.toFixed(0)}% recall.`;
 
 add(
   new Paragraph({ alignment: AlignmentType.JUSTIFIED, spacing: { after: 80 },
@@ -121,7 +129,10 @@ add(
     "against re-implementations of the strategies used by existing approaches (a Webster-optimized fixed plan [2], " +
     "vehicle-actuated control [23], max-pressure control [11] and the three-level density control of [1]) on " +
     "identical traffic. The evaluation exposes a failure mode of density-only switching near capacity, which we " +
-    "correct with a discharge-hold rule taken from actuated control. Its contributions are:"),
+    "correct with a discharge-hold rule taken from actuated control. We state the role of AI and machine learning " +
+    "plainly: the signal controller is a transparent rule, not a learned policy; machine learning enters through the " +
+    "pre-trained Haar-cascade detector of the vision pipeline, whose accuracy we measure, and through a data-driven " +
+    "calibration of the controller's parameters on held-out simulation seeds. The paper's contributions are:"),
   I.bullet("a class-weighted, queue-aware density score and a bounded green-extension controller that never shortens " +
     "yellow or all-red intervals and guarantees a maximum red time for every approach;"),
   I.bullet("a discharge-hold extension that removes the capacity loss of density-only switching near saturation;"),
@@ -133,7 +144,9 @@ add(
   I.bullet("a lightweight Haar-cascade detection and tracking pipeline, evaluated against exact ground truth with " +
     "detector and tracker ablations, failure cases and tracked-speed error;"),
   I.bullet("a validation of the simulated queue discharge against Highway Capacity Manual values, a reaction-time " +
-    "calibration that matches them, and a repeat of the main comparisons under the calibrated kinematics."),
+    "calibration that matches them, and a repeat of the main comparisons under the calibrated kinematics;"),
+  I.bullet("a study of how the controllers degrade with imperfect sensing, down to the measured detector, and a " +
+    "data-driven calibration of the density score evaluated on held-out seeds."),
   I.para("All results were obtained in simulation; no hardware prototype or recorded field footage was used. The " +
     "simulator, controllers and every experiment script are public, and each table can be regenerated from them " +
     "(github.com/shivam-G05/Smart-Traffic-Management). Section II reviews related work, Section III describes the " +
@@ -179,7 +192,7 @@ add(
     "the simulation core imports no decision, analytics or web code, and every signal controller implements one " +
     "interface (an update per time step and a phase name). The fixed-time, adaptive and comparison controllers can " +
     "therefore be exchanged without changes elsewhere. The code uses Python 3.12 (NumPy, SciPy, OpenCV, FastAPI, " +
-    "SQLAlchemy with SQLite) and a React dashboard, and has 101 automated tests."),
+    "SQLAlchemy with SQLite) and a React dashboard, and has 119 automated tests."),
   I.figure(FIG("fig1_architecture.png"), 3.3, "Software architecture. Solid boxes form the control loop; dashed boxes " +
     "form the vision pipeline, whose output is displayed and evaluated but not used for control in this study.", 1),
   I.runIn("Simulation core", "The simulator advances the junction in 50 ms steps. In each step the active controller " +
@@ -326,7 +339,7 @@ add(
 const highRatio = R(1.2), capRatio = R(1.0), r09 = R(0.9), r06 = R(0.6), r15 = R(1.5), r08 = R(0.8);
 const t2Rows = CTRL.map((c) => [L[c],
   ...LV.map((lv) => T2[c][lv].mean_delay_s.ci),
-  minus(T2[c].high.mean_delay_s.vs_fixed.text),
+  c === "fixed" ? "—" : minus(T2[c].high.mean_delay_s.vs_fixed.text),
   T2[c].high.p95_delay_s.ci, T2[c].high.mean_green_s.ci.split(" ")[0]]);
 
 add(
@@ -358,13 +371,13 @@ add(
     `level (p < 0.001), and the 95th-percentile delay fell by ${range(LV.map((lv) => -T2.adaptive[lv].p95_delay_s.vs_fixed.pct))}. ` +
     `However, the Webster plan, actuated control and max-pressure control achieved the same or slightly lower delay ` +
     `(${redu("webster")}, ${redu("actuated")} and ${redu("max_pressure")} below the fixed plan). Relative to the adaptive ` +
-    `controller their delay differed by ${range(LV.flatMap((lv) => ["webster", "actuated", "max_pressure"].map((c) => T2[c][lv].mean_delay_s.vs_adaptive.pct)))}. ` +
+    `controller their delay differed by ${between(LV.flatMap((lv) => ["webster", "actuated", "max_pressure"].map((c) => T2[c][lv].mean_delay_s.vs_adaptive.pct)))}. ` +
     `Below capacity, therefore, most of the gain comes from replacing an untuned 20 s plan with shorter, demand-responsive ` +
     `greens (mean adaptive green ${T2.adaptive.medium.mean_green_s.ci.split(" ")[0]} s), which any of these strategies ` +
     `provides. Three-level density control was worse than the fixed plan at medium and high demand ` +
     `(${pct(T2.density_levels.medium.mean_delay_s.vs_fixed.pct)} and ${pct(T2.density_levels.high.mean_delay_s.vs_fixed.pct)}), ` +
     `because its greens of 20–30 s for medium and high density outlast the queue. The discharge hold left delay ` +
-    `essentially unchanged at these levels (${range(LV.map((lv) => T2.adaptive_hold[lv].mean_delay_s.vs_adaptive.pct))} ` +
+    `essentially unchanged at these levels (${between(LV.map((lv) => T2.adaptive_hold[lv].mean_delay_s.vs_adaptive.pct))} ` +
     `relative to the adaptive controller). Throughput changed by at most ` +
     `${range(CTRL.flatMap((c) => LV.map((lv) => Math.abs(T2[c][lv].throughput_vph.vs_fixed.pct)))).split("–").pop()} ` +
     `because all three levels are far below capacity.`),
@@ -408,8 +421,8 @@ add(
     "run count with the delay accrued so far, so values above capacity are lower bounds."),
   ...I.figure(FIG("fig5_above_capacity.png"), 3.3, "Delay (top, log scale) and throughput (bottom) against demand, " +
     "preemption off. The dotted line marks the fixed-time capacity.", 4),
-  I.para(`Table IV and Fig. 4 show the consequence. The original adaptive controller's advantage disappeared by 0.8× ` +
-    `capacity and reversed from 0.9×: at capacity its delay was ${sw(capRatio, "adaptive", "delay_all_lb_s").mean.toFixed(1)} s ` +
+  I.para(`Table IV and Fig. 4 show the consequence. The original adaptive controller was better than fixed timing only at 0.6× ` +
+    `capacity and worse from 0.8× on: at capacity its delay was ${sw(capRatio, "adaptive", "delay_all_lb_s").mean.toFixed(1)} s ` +
     `against ${sw(capRatio, "fixed", "delay_all_lb_s").mean.toFixed(1)} s for the fixed plan, its queue grew by ` +
     `${sw(capRatio, "adaptive", "queue_growth_vpm").mean.toFixed(1)} vehicles per minute, and queues reached the start of ` +
     `the link during ${sw(capRatio, "adaptive", "spillback_pct").mean.toFixed(0)}% of approach-time. With the discharge ` +
@@ -423,6 +436,37 @@ add(
     `and max-pressure control degraded like the original rule. With preemption enabled the same pattern held with ` +
     `smaller margins (capacity ${pct(Oon.capacity.adaptive.vs_fixed.pct)} for the original rule and ` +
     `${pct(Oon.capacity.adaptive_hold.vs_fixed.pct)} with the hold), because preemption also cuts the hold's long greens.`),
+);
+
+// Peak period (CMT reviewer 2: queue growth, spillback, throughput, delay over time)
+const PK = N.peak;
+const pkRec = (c) => {
+  const r = PK[c].recovery_min;
+  if (r.not_recovered === r.runs) return "did not recover within the hour";
+  const s = `${r.mean.toFixed(1)} min`;
+  return r.not_recovered ? `${s} (${r.not_recovered} of ${r.runs} runs did not recover)` : s;
+};
+add(
+  I.para("Steady demand shows capacity but not how a controller manages a congestion episode. In a further 60-minute " +
+    "experiment, demand rose from 0.6 to 1.2 times the fixed-time capacity (ramping over 10–15 min), stayed there for " +
+    "15 min and fell back to 0.6 by 35 min (Fig. 5; preemption off, ten paired seeds; the Webster plan timed for the " +
+    "average demand). The queue, including vehicles waiting to enter, peaked at " +
+    `${PK.fixed.peak_queue.mean.toFixed(0)} vehicles under fixed timing, ${PK.adaptive_hold.peak_queue.mean.toFixed(0)} with ` +
+    `the discharge hold, ${PK.actuated.peak_queue.mean.toFixed(0)} with actuated control and ` +
+    `${PK.adaptive.peak_queue.mean.toFixed(0)} with the original adaptive rule. After the peak, the queue returned to its ` +
+    `pre-peak level in ${pkRec("fixed")} under fixed timing and ${pkRec("adaptive_hold")} with the hold, whereas the ` +
+    `original rule ${pkRec("adaptive")} and max-pressure control ${pkRec("max_pressure")}. Approach entries were blocked ` +
+    `for ${PK.fixed.spillback_approach_min.mean.toFixed(0)} approach-minutes under fixed timing, ` +
+    `${PK.adaptive_hold.spillback_approach_min.mean.toFixed(0)} with the hold and ${PK.adaptive.spillback_approach_min.mean.toFixed(0)} ` +
+    `with the original rule. During the peak the hold served ${PK.adaptive_hold.peak_throughput_vph.mean.toFixed(0)} veh/h, ` +
+    `against ${PK.fixed.peak_throughput_vph.mean.toFixed(0)} for fixed timing and ${PK.adaptive.peak_throughput_vph.mean.toFixed(0)} ` +
+    `for the original rule. Relative to fixed timing, total delay changed by ${minus(PK.adaptive_hold.total_delay_vs_fixed.text)} ` +
+    `with the hold, ${minus(PK.actuated.total_delay_vs_fixed.text)} with actuated control and ` +
+    `${minus(PK.adaptive.total_delay_vs_fixed.text)} with the original rule. Managing a ` +
+    "congestion episode therefore depends above all on not shortening greens while queues are saturated."),
+  ...I.figure(FIG("fig6_peak_queue.png"), 3.3, "Queue including vehicles waiting to enter during a 60-minute peak " +
+    "period (mean of ten seeds, 2-minute moving average, preemption off). Shading: demand ramping (light) and at 1.2 " +
+    "times the fixed-time capacity (dark).", 5),
 );
 
 // Emergency preemption
@@ -463,7 +507,8 @@ add(
     `distinction delay rose by ${abspct(abl("No queued", "medium").pct)} and ${abspct(abl("No queued", "high").pct)}, ` +
     `whereas setting every class weight to 1 changed it by ${pct(abl("No class", "medium").pct)} and ${pct(abl("No class", "high").pct)}. ` +
     "The benefit of the score therefore comes from distinguishing queued from moving vehicles, not from the class " +
-    "weights, which did not help and need calibration before use (Section VI-B). The ratio θ mattered little, and the " +
+    "weights, which did not help as set (Section V-J calibrates them). Raising θ to 1.5 lowered delay slightly " +
+    `(${pct(abl("theta = 1.5", "medium").pct)} and ${pct(abl("theta = 1.5", "high").pct)}) and θ = 1.0 made no difference; the ` +
     "discharge hold, with any zone length, did not change delay below capacity, where its benefit is not needed."),
   I.table(6, "Ablation of the adaptive controller", ["Variant", "Demand", "Mean delay (s)", "Change", "p", "Green (s)"],
     ablRows, [2080, 640, 900, 640, 560, 500],
@@ -487,19 +532,25 @@ add(
     `${f1(det0.recall)}% (Table VII). The failure cases are systematic. ${f1(V.failure.persistent_background_share)}% of ` +
     "the false positives recur at the same spot in at least 10% of a camera's frames, i.e. the cascade fires on fixed " +
     `background texture rather than on vehicles. Recall varies by class (${classRecall}) and by distance from the stop ` +
-    `line (${distRecall}). Without upscaling, or without histogram equalization, the cascade found almost nothing, which ` +
-    "is why both pre-processing steps are used."),
+    `line (${distRecall}); recall is lowest near the stop line, where queued vehicles stand close together. Without ` +
+    "upscaling, or without histogram equalization, the cascade found essentially nothing. A 2× instead of 3× upscale " +
+    `raised precision to ${f1(V.detectors["2x upscale"].precision)}% but cut recall to ${f1(V.detectors["2x upscale"].recall)}%, ` +
+    "so no setting of this generic cascade gives both."),
   I.table(7, "Detector accuracy and ablation (synthetic frames)",
     ["Detector variant", "Precision (%)", "Recall (%)", "Detections per frame"],
-    detEntries.map(([name, d]) => [name, f1(d.precision), f1(d.recall), d.detections_per_frame.toFixed(2)]),
+    detEntries.map(([name, d]) => [name, d.detections_per_frame < 0.01 ? "—" : f1(d.precision), f1(d.recall),
+      d.detections_per_frame.toFixed(2)]),
     [2300, 900, 900, 900],
-    "Pooled over seeds 1–4; a detection is correct when its center lies inside a ground-truth box enlarged by 4 px."),
+    "Pooled over seeds 1–4; a detection is correct when its center lies inside a ground-truth box enlarged by 4 px. " +
+    "—: too few detections for a meaningful precision."),
   I.para(`Tracking was evaluated on the default detector's output (Table VIII). Only ${f1(trk0.coverage)}% of the ` +
     `vehicle instances in view carried a confirmed track, and ${f1(trk0.vehicles_confirmed)}% of the vehicles were ` +
     "confirmed at least once. For confirmed tracks on real vehicles, the tracked speed was compared with the true speed: " +
     (trk0.speed_mae !== null
-      ? `the mean absolute error was ${trk0.speed_mae.toFixed(2)} m/s over ${trk0.speed_n} estimates, against a mean true ` +
-        `speed of ${trk0.true_speed_mean.toFixed(2)} m/s. `
+      ? `the mean absolute error was ${trk0.speed_mae.toFixed(2)} m/s over ${trk0.speed_n} estimates. This is not a ` +
+        `good result: the vehicles concerned were moving at only ${trk0.true_speed_mean.toFixed(2)} m/s on average, ` +
+        "because tracks are confirmed almost only on nearly stationary, queued vehicles, so the error is as large as the " +
+        "speed itself and the pipeline provides no usable kinematics for moving traffic. "
       : "too few confirmed tracks had enough matches for a speed estimate. ") +
     "Dropping the low-confidence second matching stage or the motion model changed coverage little, because the " +
     "limiting factor is the detector's recall, not the association; confirming tracks after one match raised coverage " +
@@ -523,6 +574,7 @@ const K1 = N.kinematics.tau16;
 const kc0 = K0["cars only"], km0 = K0["full vehicle mix"], kc1 = K1["cars only"], km1 = K1["full vehicle mix"];
 const TC = N.table2_cal;
 const OC = N.over_cal;
+const ZC = N.zone_cal;
 const reduCal = (c) => range(LV.map((lv) => -TC[c][lv].mean_delay_s.vs_fixed.pct));
 const calCtrl = ["webster", "actuated", "max_pressure", "density_levels", "adaptive", "adaptive_hold"];
 add(
@@ -554,15 +606,141 @@ add(
     `relative to the fixed plan were ${reduCal("adaptive")} for the adaptive controller and ${reduCal("webster")}, ` +
     `${reduCal("actuated")} and ${reduCal("max_pressure")} for the Webster plan, actuated and max-pressure control. ` +
     `The calibrated capacity of the fixed plan was ${OC.capacity.fixed.mean.toLocaleString("en-US")} veh/h; relative to ` +
-    `it, the original adaptive rule reached ${pct(OC.capacity.adaptive.vs_fixed.pct)} and the discharge hold ` +
-    `${pct(OC.capacity.adaptive_hold.vs_fixed.pct)}.`),
+    `it, the original adaptive rule reached ${pct(OC.capacity.adaptive.vs_fixed.pct)} and the Webster plan ` +
+    `${pct(OC.capacity.webster.vs_fixed.pct)}. The discharge hold, with the 10 m zone chosen for the default model, ` +
+    `reached only ${pct(OC.capacity.adaptive_hold.vs_fixed.pct)} (mean saturated green ${OC.capacity.adaptive_hold.green} s): ` +
+    "with a reaction time, vehicles leaving a queue spread out to gaps of about 20 m at speed, so a 10 m zone empties " +
+    "between them and the green gaps out while the queue is still discharging. The zone is therefore a " +
+    "kinematics-dependent parameter, as the passage time of a real actuated controller is set for local conditions. " +
+    `Re-tuned for the calibrated model on the tuning seed (${ZC.tuning.best_zone_m} m), the discharge hold reached ` +
+    `${pct(ZC.over.capacity.adaptive_hold.vs_fixed.pct)} capacity relative to fixed timing and actuated control ` +
+    `${pct(ZC.over.capacity.actuated.vs_fixed.pct)}, against ${pct(ZC.over.capacity.webster.vs_fixed.pct)} for the ` +
+    `Webster plan (Table X).`),
   I.table(10, "Main comparisons repeated with calibrated kinematics",
     ["Controller", "Delay vs fixed, low", "medium", "high", "Capacity vs fixed"],
-    calCtrl.map((c) => [L[c], ...LV.map((lv) => minus(TC[c][lv].mean_delay_s.vs_fixed.text)),
+    [...calCtrl.map((c) => [L[c], ...LV.map((lv) => minus(TC[c][lv].mean_delay_s.vs_fixed.text)),
       OC.capacity[c] ? minus(OC.capacity[c].vs_fixed.text) : "—"]),
+    ...["actuated", "adaptive_hold"].map((c) => [`${L[c]}, zone ${ZC.tuning.best_zone_m} m`,
+      ...LV.map((lv) => minus(ZC.table2[c][lv].mean_delay_s.vs_fixed.text)), minus(ZC.over.capacity[c].vs_fixed.text)])],
     [1700, 900, 800, 800, 1000],
-    "τ = 1.6 s; ten paired seeds per demand level (preemption on) and five capacity seeds (preemption off)."),
+    "τ = 1.6 s; ten paired seeds per demand level (preemption on) and five capacity seeds (preemption off). Gap-out " +
+    "controllers use the 10 m zone unless a re-tuned zone is stated."),
 );
+
+// Imperfect sensing (CMT reviewer 1, point 3)
+const SN = N.sensing;
+const snConds = Object.keys(SN);
+const snMed = SN[snConds[0]], snCap = SN[snConds[1]];
+const snCtrl = snMed.controllers;
+const snRow = (cond, name) => cond.rows.find((r) => r.sensing.startsWith(name));
+const snCell = (cond, name, c) => {
+  const x = snRow(cond, name)[c];
+  return name === "Exact states" ? x.mean.toFixed(1) : `${x.mean.toFixed(1)} (${minus(x.vs_exact.text)})`;
+};
+const snNames = snMed.rows.map((r) => r.sensing);
+const haarName = snNames.find((n) => n.startsWith("Measured Haar"));
+const snTable = (cond) => snNames.map((name) => [name, ...snCtrl.map((c) => snCell(cond, name, c))]);
+add(
+  I.subheading("Imperfect Sensing"),
+  I.para("All results so far assume that the controller knows every vehicle's position, speed and class. To measure " +
+    "how much this matters, the vehicle-reading controllers were run behind a sensor model that reports only what a " +
+    "camera would: vehicles within 60 m of the stop line, refreshed at 2 Hz, without classes (as a single cascade), " +
+    "with each vehicle detected independently with a given recall, and optionally with phantom detections at fixed " +
+    "spots, like the cascade's static false positives. The last profile uses the measured pipeline of Section V-G " +
+    `(${haarName ? haarName.replace("Measured Haar ", "").replace(/[()]/g, "") : "recall and false positives as measured"}). ` +
+    "Emergency preemption still reads the true emergency flags; ten paired seeds per cell. Tables XI and XII give the " +
+    "results at the paper's medium demand and at 0.9 times capacity."),
+  I.table(11, `Delay under imperfect sensing (s), medium demand`,
+    ["Sensing", ...snCtrl.map((c) => L[c])], snTable(snMed), [1720, 830, 830, 830, 830],
+    `Change relative to the same controller with exact states in brackets. Fixed plan (needs no sensing): ${snMed.fixed} s.`),
+  I.table(12, `Delay under imperfect sensing (s), 0.9 times capacity`,
+    ["Sensing", ...snCtrl.map((c) => L[c])], snTable(snCap), [1720, 830, 830, 830, 830],
+    `Delay includes time waiting to enter the road; preemption off. Fixed plan: ${snCap.fixed} s.`),
+  I.para(senseText()),
+);
+
+function senseText() {
+  const hold = "adaptive_hold";
+  const capExact = snRow(snCap, "Exact states")[hold].mean;
+  const capCam = snRow(snCap, "Camera")[hold];
+  const capR50 = snRow(snCap, "recall 50%")[hold];
+  const medPh = snRow(snMed, "2 phantoms")[hold];
+  const capHaar = haarName ? snRow(snCap, "Measured Haar")[hold] : null;
+  return "Below capacity the controllers tolerated missed detections well, because missing vehicles only shortens " +
+    "greens, which costs little when queues are short. Near capacity, sensing mattered: the discharge-hold controller's " +
+    `delay rose from ${capExact.toFixed(1)} s with exact states to ${capCam.mean.toFixed(1)} s with a perfect camera ` +
+    `view and ${capR50.mean.toFixed(1)} s at 50% recall, against ${snCap.fixed_mean.toFixed(1)} s for the fixed plan. ` +
+    "Phantom detections were the most damaging error for the gap-out rule: a phantom inside the 10 m zone never moves, " +
+    `so the green never gaps out and runs to the maximum (medium-demand delay ${medPh.mean.toFixed(1)} s, ` +
+    `${minus(medPh.vs_fixed.text)} relative to fixed timing). ` +
+    (capHaar ? haarSentence() : "") +
+    "Closing the loop with the present detector would therefore harm traffic; a detector must at least suppress static " +
+    "false positives near the stop line, and its recall matters most near capacity.";
+}
+
+function haarSentence() {
+  // Which controllers end up worse than the fixed plan with the measured detector, per demand.
+  const worse = (cond) => snCtrl.filter((c) => snRow(cond, "Measured Haar")[c].mean > cond.fixed_mean);
+  const names = (list) => list.map((c) => L[c].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
+  const wCap = worse(snCap), wMed = worse(snMed);
+  const hold = "adaptive_hold";
+  let s = "With the measured pipeline, ";
+  s += wCap.length === snCtrl.length ? "every vehicle-reading controller was worse than the fixed plan near capacity "
+    : `${names(wCap)} ${wCap.length === 1 ? "was" : "were"} worse than the fixed plan near capacity `;
+  s += `(discharge hold ${snRow(snCap, "Measured Haar")[hold].mean.toFixed(1)} s against ${snCap.fixed_mean.toFixed(1)} s). `;
+  const better = snCtrl.filter((c) => !wMed.includes(c));
+  if (wMed.length && better.length) {
+    s += `At medium demand ${names(better)} still beat the fixed plan, because phantoms appear on both directions ` +
+      `and largely cancel in their comparisons, whereas ${names(wMed)} ${wMed.length === 1 ? "was" : "were"} held at ` +
+      `long greens by phantoms in the stop-line zone (${snRow(snMed, "Measured Haar")[hold].mean.toFixed(1)} s against ` +
+      `${snMed.fixed_mean.toFixed(1)} s). `;
+  }
+  return s;
+}
+
+// Weight calibration (CMT reviewer 1, point 5; also point 2)
+const CB = N.calibration;
+const cbConds = Object.keys(CB.held_out["Hand-set (paper)"]);
+const cbParams = [["motorcycle", "Motorcycle weight"], ["auto", "Auto-rickshaw weight"], ["bus", "Bus weight"],
+  ["truck", "Truck weight"], ["emergency", "Emergency-vehicle weight"], ["queued_ratio", "Queued/moving ratio"],
+  ["theta", "Switching ratio θ"]];
+const cbP = (p) => (p < 0.001 ? "< 0.001" : p.toFixed(3));
+add(
+  I.subheading("Calibration of the Density Weights"),
+  I.para("The class weights and multipliers of (2) were set by hand. To calibrate them from data, a random search over " +
+    "the score parameters of the discharge-hold controller (four class weights and the emergency-vehicle weight, " +
+    "log-uniform 0.25–4 and 1–10; the queued/moving ratio, 1–12; and θ, 1.0–1.6; the car weight stays 1 because rule " +
+    `(3) compares ratios) evaluated ${CB.candidates} candidates on tuning seeds ${CB.tune_seeds[0]}–${CB.tune_seeds[CB.tune_seeds.length - 1]} at medium demand, high demand and 0.9 times ` +
+    "capacity, minimizing delay relative to the hand-set weights. The best candidate, the hand-set weights and a plain " +
+    "vehicle count were then compared on the held-out seeds 1–10 (Table XIII)."),
+  I.table(13, "Calibrated score parameters and held-out delay",
+    ["Parameter / condition", "Hand-set", "Calibrated", "Plain count"],
+    [...cbParams.map(([k, label]) => [label, CB.hand_set[k].toFixed(2), CB.best_params[k].toFixed(2),
+      k === "theta" ? "1.10" : "1.00"]),
+    ...cbConds.map((cond) => [`Delay, ${cond} (s)`,
+      CB.held_out["Hand-set (paper)"][cond].mean.toFixed(2),
+      `${CB.held_out.Calibrated[cond].mean.toFixed(2)} (${pct(CB.held_out.Calibrated[cond].change_pct)}, p ${cbP(CB.held_out.Calibrated[cond].p)})`,
+      `${CB.held_out["Plain count"][cond].mean.toFixed(2)} (${pct(CB.held_out["Plain count"][cond].change_pct)})`])],
+    [1700, 900, 1500, 1000],
+    "Delays on held-out seeds 1–10 (ten paired seeds); changes and p relative to the hand-set weights."),
+  I.para(calibText()),
+);
+
+function calibText() {
+  const cal = CB.held_out.Calibrated;
+  const sig = cbConds.filter((c) => cal[c].p < 0.05);
+  const better = sig.filter((c) => cal[c].change_pct < 0);
+  const worse = sig.filter((c) => cal[c].change_pct > 0);
+  let s = "On the held-out seeds the calibrated score changed delay by " +
+    cbConds.map((c) => `${pct(cal[c].change_pct)} (${c})`).join(", ") + " relative to the hand-set weights";
+  s += better.length === cbConds.length ? ", a significant improvement in every condition. "
+    : better.length ? `; the improvement was significant for ${better.join(" and ")}` + (worse.length ? ` and delay rose significantly for ${worse.join(" and ")}. ` : ". ")
+      : worse.length ? `; delay rose significantly for ${worse.join(" and ")}. ` : "; none of these differences was significant. ";
+  s += "The plain count remained clearly worse, confirming Table VI. The calibrated parameters are fitted to this " +
+    "simulator's traffic and must be re-fitted against field data before deployment; the search is a simple, " +
+    "reproducible way to do so, not a learned controller.";
+  return s;
+}
 
 // VI. Discussion ---------------------------------------------------------------
 add(
@@ -588,17 +766,19 @@ add(
     "faster than real ones (Table IX). A reaction time of 1.6 s matches the field saturation headway, and Section V-H " +
     "repeats the comparisons with it, but the calibrated model still lacks start-up delay, so its start-up lost time is " +
     "too low; with real start-up lost time, short greens would cost more, so the original rule's capacity loss is if " +
-    "anything understated."),
+    "anything understated. The gap-out zone of the discharge hold must also suit the local vehicle spacing: 10 m for " +
+    `the default model, ${ZC.tuning.best_zone_m} m for the calibrated one, as the passage time of a field actuated ` +
+    "controller is set on site."),
   I.bullet("Arrival model. Arrivals follow deterministic headways at a rate redrawn every 15 s, not a Poisson process, " +
     "and emergency vehicles are far more frequent than in real traffic."),
   I.bullet("Comparison controllers. The baselines are re-implementations of the published strategies with ideal sensing, " +
     "not the original systems; the Webster plan is given the true mean demand of each run."),
-  I.bullet("Ideal sensing. The controller and preemption layer read exact vehicle states. The vision pipeline was " +
-    "tested only on synthetic frames and does not classify vehicles; real footage with lighting changes, occlusion " +
-    "and weather is harder."),
-  I.bullet("Heuristic parameters. The class weights, multipliers and congestion thresholds were set by hand; Section " +
-    "V-F shows that the class weights do not help as set, so they need calibration against local passenger-car-unit " +
-    "factors."),
+  I.bullet("Sensing. The main results use exact vehicle states, and emergency vehicles are detected perfectly. Section " +
+    "V-I shows that the controllers need a detector far better than the present Haar pipeline, in particular one " +
+    "without static false positives near the stop line. The vision pipeline was tested only on synthetic frames; real " +
+    "footage with lighting changes, occlusion and weather is harder."),
+  I.bullet("Parameters. The calibrated score parameters (Section V-J) are fitted to this simulator, not to field data; " +
+    "the congestion thresholds used for display were set by hand."),
   I.para("A planned Raspberry Pi 4 deployment, with one camera per approach and relay-driven signal heads, is estimated " +
     "at roughly INR 6,000–8,000 in components; this cost and the hardware timing in Table VII are estimates that must be " +
     "verified on actual hardware."),
@@ -614,7 +794,8 @@ add(
     "did a Webster-optimized plan, actuated and max-pressure control. Near capacity the original density rule lost " +
     `${abspct(O.capacity.adaptive.vs_fixed.pct)} of capacity; the discharge hold restored and exceeded the fixed plan's ` +
     `capacity (${pct(O.capacity.adaptive_hold.vs_fixed.pct)}) and gave lower delay than fixed timing from 0.6 to 1.5 ` +
-    "times capacity. No run violated a change interval. The queued/moving distinction, not the class weights, accounted " +
+    "times capacity (not significantly at 1.0×). Under calibrated kinematics these findings held once the hold's zone was " +
+    `re-tuned (${ZC.tuning.best_zone_m} m). No run violated a change interval. The queued/moving distinction, not the class weights, accounted ` +
     "for the benefit of the density score."),
   I.para("Future work will close the loop between detection and control with a class-aware detector trained on real " +
     "footage, calibrate the class weights against local passenger-car-unit factors, test the controller in an " +
