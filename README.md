@@ -1,9 +1,12 @@
 # AI-Based Smart Traffic Management & Emergency Vehicle Clearance System
 
-Simulation-only, software-based smart traffic management system. No hardware,
-no Arduino, no Raspberry Pi — a custom Python physics simulation of a 4-way
-intersection, streamed live to a React dashboard, with pluggable AI decision
-logic that replaces fixed-timer signals.
+Simulation-first, software-based smart traffic management system — a custom
+Python physics simulation of a 4-way intersection, streamed live to a React
+dashboard, with pluggable AI decision logic that replaces fixed-timer
+signals. Everything runs without hardware; the optional Milestone 10
+hardware bridge (`hardware/`, Raspberry Pi or ESP32) lets real signal lights
+mirror the controller, but has not yet been built and tested on a physical
+board.
 
 This repository is built **incrementally, milestone by milestone**. Each
 milestone is fully working and demoable on its own before the next begins.
@@ -19,7 +22,7 @@ milestone is fully working and demoable on its own before the next begins.
 | 5 | Adaptive/AI signal controller (replaces fixed-timer) | ✅ Done |
 | 6 | Emergency vehicle detection + signal preemption | ✅ Done |
 | 7 | Analytics dashboard — historical graphs, congestion levels, reports | ✅ Done |
-| 8 | PostgreSQL + SQLAlchemy persistence, report export | ✅ Done |
+| 8 | SQLAlchemy persistence (SQLite by default, Postgres-ready), report export | ✅ Done |
 | 9 | Fixed-timer vs adaptive live comparison, fuel/congestion savings | ✅ Done |
 | 10 | Dockerization, hardening, hardware bridge, CI | ✅ Done |
 
@@ -999,7 +1002,8 @@ of 0.35. That was subsequently lowered to 0.12 for dashboard readability
 (see "Dashboard rendering pass" below), so a re-run produces smaller
 absolute numbers — less contention means less for an adaptive controller to
 win back. Re-measure rather than quoting the above if the demand rate
-changes again.
+changes again — `scripts/benchmark.py` does that across several demand
+levels and seeds; see "Benchmark — fixed vs. adaptive" below.
 
 ---
 
@@ -1221,12 +1225,53 @@ correctly, REST calls relative, no `127.0.0.1:8000` left in the bundle),
 parsing into `Settings`, and `gpio_driver.py` in `--dry-run` mirroring the live
 backend (including the failsafe when the backend was stopped).
 
+## Benchmark — fixed vs. adaptive
+
+Milestone 9's live comparison is a single run at whatever demand the
+dashboard uses. `scripts/benchmark.py` produces the repeatable version: both
+controllers, headless, against identical seeded traffic at three demand
+levels, 10 seeds each.
+
+```bash
+python scripts/benchmark.py                    # ~2 min: 30 min simulated x 10 seeds x 3 levels
+python scripts/benchmark.py --csv results.csv  # also write every individual run
+python scripts/benchmark.py --duration 300 --seeds 3   # quick check
+```
+
+Measured with the defaults:
+
+| Traffic | Arrivals per road | Fixed avg wait | Adaptive avg wait | Wait reduction | Adaptive better | Vehicles through (fixed / adaptive) |
+|---|---|---|---|---|---|---|
+| low | 216/h | 6.85 s | 4.47 s | 34.7% (sd 4.8) | 10/10 seeds | 421 / 422 |
+| medium | 432/h | 7.16 s | 4.57 s | 36.2% (sd 2.9) | 10/10 seeds | 841 / 837 |
+| high | 900/h | 7.50 s | 4.84 s | 35.5% (sd 3.8) | 10/10 seeds | 1638 / 1613 |
+
+What these numbers are, and are not:
+
+- **Wait time** is time a vehicle actually spent stopped in a queue
+  (`Vehicle.queued_time_s`, Milestone 7), averaged over every vehicle that
+  left the map — not total travel time.
+- **Both sides are built through `controller_factory.build_controller()`**,
+  so both get emergency preemption; the controller strategy is the only
+  difference. Each seed gives both sides the exact same arrivals.
+- **Throughput is unchanged** (within 1.5%): the adaptive controller cuts
+  waiting, it does not push more vehicles through. At high demand it moves
+  slightly fewer, since longer greens mean fewer phase changes.
+- **These are simulation results**, from this project's own traffic model
+  and the vehicle positions it knows exactly — not measurements from a
+  real intersection or from the camera pipeline.
+
+The demand level is the one simulation input the script varies, via
+`SimulationEngine(base_spawn_rate_per_s=...)`; everything else uses the
+live dashboard's constants. `tests/test_benchmark.py` keeps the script
+runnable.
+
 ## Running it
 
 ### Backend
 
 ```bash
-cd Smart-Traffic-Management   # repo root
+cd Final-Year-Project   # the repo root, whatever you cloned it as
 python -m venv .venv
 source .venv/Scripts/activate        # Windows Git Bash; use .venv\Scripts\Activate.ps1 in PowerShell
 pip install -r backend/requirements.txt
@@ -1263,13 +1308,13 @@ cd backend
 python -m pytest -q
 ```
 
-64 tests across `tests/test_simulation.py`, `tests/test_api.py`,
+72 tests across `tests/test_simulation.py`, `tests/test_api.py`,
 `tests/test_connection_manager.py`, `tests/test_vision.py`,
 `tests/test_tracker.py`, `tests/test_density.py`,
 `tests/test_adaptive_controller.py`, `tests/test_emergency_preemption.py`,
-`tests/test_analytics.py`, `tests/test_database.py`, and
-`tests/test_comparison.py` — see each milestone section above for what's
-covered where.
+`tests/test_analytics.py`, `tests/test_database.py`,
+`tests/test_comparison.py`, and `tests/test_benchmark.py` — see each
+milestone section above for what's covered where.
 
 ---
 
@@ -1281,6 +1326,9 @@ covered where.
   interface — nothing upstream needs to change
 - `database/session.py`'s `Database` class already takes a plain
   `DATABASE_URL`; swapping SQLite for Postgres is a one-line config change
-- Docker Compose (backend + frontend + Postgres) lands in Milestone 10 —
-  the only remaining milestone, deliberately not started (no Docker
-  installed on this machine yet)
+- Adding a Postgres service to `docker-compose.yml` (Milestone 10 ships
+  backend + frontend, with SQLite on a named volume) needs only the
+  service and an `STMS_DATABASE_URL` pointing at it
+- The adaptive controller decides from the simulation's exact vehicle
+  positions; a camera-driven mode would feed it counts from `vision/`
+  instead, through the same density functions
