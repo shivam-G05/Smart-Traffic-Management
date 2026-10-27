@@ -1,0 +1,12 @@
+%% frontmatter/Abstract.tex
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Fixed-time traffic signals give every approach of a junction the same green time regardless of demand, which wastes green on lightly used approaches and lengthens queues on busy ones. This project designs, implements and evaluates a density-aware signal controller for an isolated four-arm junction. Each approach is scored from vehicle class and queue state, with a queued vehicle counting three times as much as a moving one; the green is extended between 8~s and 45~s while the served direction dominates, yellow and all-red intervals are never shortened, and an emergency-vehicle preemption layer keeps full change intervals.
+
+The system is a complete simulation-first software stack: a Python microscopic simulator, a decision engine, a Haar-cascade detection and ByteTrack-style tracking pipeline, a FastAPI backend with a SQLite store, a React dashboard and an optional Raspberry Pi/ESP32 signal driver. It was evaluated on paired, seeded traffic against the fixed plan and four re-implemented strategies (Webster-optimized, actuated, max-pressure and three-level density control) in 3,524 runs.
+
+Below capacity the controller reduced mean stopped delay by 35.3--36.1\% relative to a 20~s fixed plan, but the Webster, actuated and max-pressure strategies did as well. Near capacity, density-only switching lost 18.9\% of capacity; a discharge-hold rule restored it (+9.8\% relative to fixed timing). The queued/moving distinction, not the class weights, drives the score's benefit. The findings hold with kinematics calibrated to field saturation headways once the hold zone is re-tuned, but with the present Haar detector (4.1\% precision, 8.2\% recall) every controller would be worse than fixed timing near capacity. A per-step audit found no conflicting greens or shortened change intervals in any run.
+
+\vspace{0.8cm}
+\noindent\textbf{Keywords:} adaptive traffic signal control, vehicle density, actuated control, max-pressure control, emergency vehicle preemption, oversaturation, microscopic simulation

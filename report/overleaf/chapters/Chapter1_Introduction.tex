@@ -1,0 +1,37 @@
+%% Chapter1_Introduction.tex
+\chapter{Introduction}
+\label{chap:intro}
+
+\section{Background and Motivation}
+Signalized intersections account for a large share of the delay in urban road networks. Many junctions, especially in smaller cities, still run fixed-time plans in which each approach receives a preset green interval regardless of how many vehicles are waiting. Such plans are dimensioned for average flows; when demand fluctuates or is unevenly distributed across approaches, green time is wasted on nearly empty approaches while queues build on busy ones. Traffic in Indian cities adds further variety: motorcycles, auto-rickshaws, buses and trucks share the road with cars, and emergency vehicles must be able to cross a junction without delay.
+
+Traffic-responsive systems such as SCATS and SCOOT adjust timings from detector data, but they rely on dedicated detector infrastructure and centrally managed installations~\cite{ref3,ref4}. Low-cost alternatives estimate density locally with infrared sensors, image-based density classes, deep detectors on camera feeds or existing surveillance cameras, and adapt green time accordingly~\cite{ref1,ref5,ref6,ref8,ref9,ref10}. These low-cost systems are usually demonstrated on a prototype or a few scenarios and report an average improvement over a fixed plan. Four questions are rarely answered: whether timing logic that varies green keeps safe change intervals; how emergency priority interacts with density-based timing; how the controller behaves as demand approaches and exceeds capacity; and how much of a reported gain is due to the density logic at all, rather than to replacing an untuned fixed plan with any demand-responsive one. This project addresses these questions.
+
+\section{Problem Statement}
+The lack of a rigorous, reproducible evaluation of low-cost density-based signal control, against strong baselines, near and above capacity, and with verified signal safety, leaves it unclear when such a controller is actually better than a well-tuned fixed or actuated plan. This project addresses the problem by building a complete simulation-first traffic management system with a density-aware controller, an emergency preemption layer and a vision pipeline, and by evaluating it on identical seeded traffic against re-implementations of the strategies used by existing approaches.
+
+\section{Research Objectives}
+The key objectives of this project are:
+\begin{enumerate}
+  \item To design and develop a density-aware adaptive signal controller, an emergency-vehicle preemption layer that keeps full change intervals, and a vision pipeline (detection and tracking), together with a live dashboard and a hardware bridge.
+  \item To analyse and evaluate the controller against a fixed plan and four re-implemented strategies (Webster-optimized fixed, vehicle-actuated, max-pressure and three-level density control) below, at and above junction capacity.
+  \item To validate the performance of the system: signal safety at every simulation step, the simulator's queue discharge against Highway Capacity Manual values, the vision pipeline against exact ground truth, and the effect of imperfect sensing.
+  \item To demonstrate the societal relevance of the work: shorter waiting, safer emergency-vehicle passage and reduced idling, in line with the UN Sustainable Development Goals.
+\end{enumerate}
+
+\section{Novelty and Originality}
+Rather than proposing a new detector, this project studies the \emph{timing logic} of a density-based controller under controlled, statistically paired conditions, against re-implementations of the strategies used by existing approaches: a Webster-optimized fixed plan~\cite{ref2}, vehicle-actuated control~\cite{ref23}, max-pressure control~\cite{ref11} and the three-level density control of~\cite{ref1}. The evaluation exposes a failure mode of density-only switching near capacity, which is corrected by a discharge-hold rule taken from actuated control. The role of AI and machine learning is stated plainly: the signal controller is a transparent rule, not a learned policy; machine learning enters through the pre-trained Haar-cascade detector of the vision pipeline, whose accuracy is measured, and through a data-driven calibration of the controller's parameters on held-out simulation seeds. The original contributions are listed in Section~\ref{sec:contrib}.
+
+\section{Scope of the Project}
+\textbf{Included:} a Python microscopic simulator of a four-arm junction with seven vehicle classes; fixed-time, adaptive and four comparison controllers; emergency preemption with a per-step safety audit; a virtual-camera Haar-cascade detector and ByteTrack-style tracker evaluated against exact ground truth; a FastAPI backend with WebSocket streaming and SQLite persistence; a React dashboard with analytics and live fixed-versus-adaptive comparison; a Raspberry Pi/ESP32 signal-driver bridge; Docker packaging and continuous integration; and the experiments reported in Chapter~\ref{chap:results}.
+
+\textbf{Excluded:} turning movements, lane changes, pedestrians and multi-junction coordination; recorded or real-world camera footage; closing the control loop on detector output; reinforcement-learning controllers; and tests on a physical junction or a verified hardware deployment. These are left for future work (Section~\ref{sec:future}).
+
+\section{Report Organisation}
+Chapter 2 presents the literature review.
+Chapter 3 describes the research methodology.
+Chapter 4 covers the implementation details.
+Chapter 5 presents results and discussion.
+Chapter 6 discusses societal impact and SDG alignment.
+Chapter 7 addresses Universal Human Values.
+Chapter 8 concludes the report with future directions.

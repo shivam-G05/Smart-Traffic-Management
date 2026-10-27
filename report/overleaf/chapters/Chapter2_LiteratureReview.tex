@@ -1,0 +1,46 @@
+%% Chapter2_LiteratureReview.tex
+\chapter{Literature Review}
+\label{chap:lit}
+
+\section{Historical Overview}
+Fixed-time signal plans are commonly derived from Webster's delay-minimizing cycle-length formula~\cite{ref2}. Networks of signals were later coordinated with traffic-responsive systems: SCATS adjusts splits, cycle lengths and offsets from detector data~\cite{ref3}, and SCOOT optimizes the plan on line from loop-detector flows~\cite{ref4}. Vehicle-actuated control, standard in signal timing practice, extends a green while detectors near the stop line keep registering vehicles and ends it when a gap appears (``gap-out''), within minimum and maximum green limits~\cite{ref23}. Max-pressure control chooses phases from queue differences and has provable throughput guarantees~\cite{ref11}.
+
+On the simulation side, the Gipps car-following model~\cite{ref21} and the Krau{\ss} model with its driver reaction time~\cite{ref25} are the basis of many microscopic simulators, SUMO among them~\cite{ref22}. The Highway Capacity Manual~\cite{ref24} supplies the field saturation-flow and start-up lost-time values against which a simulator can be checked. For sensing, Viola and Jones introduced boosted cascades of Haar-like features~\cite{ref16}, which remain attractive for embedded use because inference is cheap and needs no GPU; multi-object trackers combine a Kalman filter~\cite{ref18} with Hungarian assignment~\cite{ref19}, as in ByteTrack~\cite{ref17}.
+
+\section{Recent and State-of-the-Art Work}
+Reinforcement-learning controllers have been studied widely, although they must be trained in simulation and their behaviour is harder to bound~\cite{ref12}. Among low-cost density-based systems, Nsofwa and Tembo classify image-based density into low, medium and high levels and adjust signal duration, showing in simulation that this outperforms fixed timing~\cite{ref1}. Kamble et al.\ apply YOLO-based recognition~\cite{ref7} to IP-camera feeds to prioritize the busiest lane~\cite{ref6}; such detectors are accurate but demanding on low-power hardware. Pardeshi et al.\ use passive infrared sensors on an ESP32 platform~\cite{ref5}, and Patil et al.\ and Thomas et al.\ also adapt timing to measured density~\cite{ref9,ref10}. Hu et al.\ estimate density from surveillance cameras~\cite{ref8}. Related systems add incident detection and alerting~\cite{ref13}, AI-based light design~\cite{ref14} or machine-learning traffic prediction on the Edge Impulse platform~\cite{ref15}. Emergency vehicles have been given signal priority based on visual sensing~\cite{ref20}.
+
+These works mainly report an improvement over fixed timing on a prototype or a few scenarios. This project differs in three ways: it compares against strong baselines on identical traffic, it tests demand up to 1.5 times capacity, and it verifies change-interval safety at every simulation step.
+
+\section{Comparative Analysis of Existing Approaches}
+
+\begin{table}[H]
+\centering
+\caption{Comparison of Existing Approaches}
+\label{tab:litreview}
+\small
+\begin{tabular}{@{}p{3.3cm}p{1.1cm}p{3.6cm}p{3.1cm}p{3.6cm}@{}}
+\toprule
+\textbf{Author(s)} & \textbf{Year} & \textbf{Approach} & \textbf{Setting} & \textbf{Limitation (for this study)} \\
+\midrule
+Webster~\cite{ref2} & 1958 & Delay-optimal fixed cycle and splits & Fixed plan from mean demand & Cannot react to fluctuating or uneven demand \\
+Sims and Dobinson~\cite{ref3}; Hunt et al.~\cite{ref4} & 1980, 1982 & SCATS and SCOOT: detector-based adaptive plans & Networks with loop detectors & Needs dedicated detector infrastructure \\
+Koonce et al.~\cite{ref23} & 2008 & Vehicle-actuated control with gap-out & Stop-line detectors & Needs detectors; no density score \\
+Varaiya~\cite{ref11} & 2013 & Max-pressure phase selection & Queue differences & Moving vehicles also leave the pressure count as a queue discharges \\
+Nsofwa and Tembo~\cite{ref1} & 2025 & Three-level image-based density classes set the green & Simulation & Compared with fixed timing; no capacity or safety-interval study reported \\
+Pardeshi et al.~\cite{ref5} & 2026 & Infrared sensing and density-based prioritization on ESP32 & Prototype platform & Gain reported against fixed timing \\
+Kamble et al.~\cite{ref6} & 2025 & YOLO on IP-camera feeds; busiest lane first & Camera feeds & Detector is demanding on low-power hardware \\
+Hu et al.~\cite{ref8} & 2023 & Density estimation from surveillance cameras & Existing camera network & Estimates density; timing logic not the focus \\
+Patil et al.~\cite{ref9}; Thomas et al.~\cite{ref10} & 2024, 2025 & Timing adapted to measured density & Prototype or few scenarios & Gain reported against fixed timing \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Identification of Research Gap}
+Based on the review above, the following gaps remain in the existing literature:
+\begin{enumerate}
+  \item Gap 1: Low-cost density-based controllers are usually compared only with fixed timing, so it is unknown how much of their gain comes from the density logic rather than from replacing an untuned plan.
+  \item Gap 2: Behaviour near and above capacity (queue growth, spillback, throughput) and the safety of change intervals under variable greens and emergency preemption are rarely examined.
+  \item Gap 3: The gap between idealized sensing and the accuracy of a real, inexpensive detector is seldom quantified, nor are the density weights validated.
+\end{enumerate}
+The proposed project directly addresses these gaps by comparing against re-implemented Webster, actuated, max-pressure and density-level strategies on identical traffic, by sweeping demand from 0.6 to 1.5 times capacity with a per-step safety audit, and by measuring the effect of imperfect sensing and of calibrating the weights on held-out seeds.

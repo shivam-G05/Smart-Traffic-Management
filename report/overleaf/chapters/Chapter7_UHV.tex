@@ -1,0 +1,18 @@
+%% Chapter7_UHV.tex
+\chapter{Universal Human Values and Harmony with Nature}
+\label{chap:uhv}
+
+\section{Impact on the Material Order}
+The project uses little material resource: the system runs as software on an ordinary computer, and the optional signal bridge needs a Raspberry Pi or ESP32 board, twelve LEDs with resistors, and (for larger lamps) relay modules. Its purpose is to reduce a material waste, the fuel burnt by vehicles idling in queues at a signal, by shortening waiting time (35.3--36.1\% lower delay below capacity in simulation, and shorter queues near capacity with the discharge hold). The effect on energy use is expected but was not measured. Because the controller is software that can run on an existing signal's hardware, little electronic waste is generated; the main lifecycle cost is the energy of the board and of any cameras.
+
+\section{Impact on the Plant / Bio Order}
+The project does not act on vegetation directly. Indirectly, shorter queues and less idling mean lower exhaust emissions near junctions, which benefits roadside plants and urban green space. This is an expected, unquantified benefit; the project does not model emissions.
+
+\section{Impact on the Animal Order}
+The project has no direct effect on animal habitats. Smoother traffic flow and less idling reduce local air pollution and noise from stop-and-go traffic, which benefits urban wildlife and domestic animals, and drivers who are not stopped for long are less likely to take risks near the junction. As above, these effects are indirect and were not measured.
+
+\section{Impact on the Human Order}
+The human benefits are the central aim. Commuters spend less time waiting; emergency vehicles cross the junction with priority (their stopped delay falls to the start-up component of the metric in every controller) while all other road users are protected by full yellow and all-red intervals that are never shortened (no violation in 3,524 audited runs); and the bounded red time of 50~s means that no approach is starved. The design is transparent: a one-line rule, not a black box, so that authorities and citizens can understand and question it. The project is offered as an open, reproducible resource that students and municipalities can reuse, supporting access to knowledge and fair treatment of all road-user classes. Its honest reporting of limitations supports trust: it states that the gain below capacity is matched by simpler strategies and that the present vision detector cannot yet be trusted to drive the signal.
+
+\section{Overall Mutual Fulfilment}
+The project aims at a win-win outcome across all four orders. For people, it shortens waiting, protects safety and gives emergency vehicles priority; for the material order it reduces fuel wasted in idling at little hardware cost; and for the plant and animal orders it lowers, indirectly, emissions and noise at junctions. These benefits reinforce one another rather than trade off: the same shorter queues serve commuters, emergency responders and the environment. The solution is synergistic with the well-being of the material, plant and animal orders and does not exploit them. Care is needed that efficiency does not override safety or fairness, which is why change intervals are protected, red time is bounded, and the claims of the report are limited to what the simulation shows.

@@ -1,0 +1,39 @@
+%% Chapter6_SocietalImpact.tex
+\chapter{Societal Impact and SDG Alignment}
+\label{chap:societal}
+
+\section{Primary SDG Relevance}
+This project directly addresses \textbf{SDG 11: Sustainable Cities and Communities}, specifically Target 11.2, which aims to provide access to safe, affordable, accessible and sustainable transport systems for all, and, through reduced congestion, Target 11.6 on the adverse environmental impact of cities.
+
+The project contributes to this goal by showing, in a reproducible simulation, how a low-cost density-aware signal controller behaves: below capacity it shortens delay by 35.3--36.1\% relative to a 20~s fixed plan, and above capacity its discharge-hold rule avoids the capacity loss of naive density switching and keeps queues and spillback below those of fixed timing. It also gives emergency vehicles priority while keeping full yellow and all-red intervals, and it identifies honestly where a simple detector would make matters worse. These are simulation results; the real-world benefit depends on field validation.
+
+\section{Secondary SDG Linkages}
+Beyond the primary SDG, this project indirectly contributes to:
+\begin{itemize}
+  \item \textbf{SDG 3 (Good Health and Well-being), Target 3.6:} fewer road injuries is supported by a controller that never shortens change intervals (no violation in 3,524 audited runs) and by emergency-vehicle preemption that reduces ambulance delay at the junction, which can shorten response times.
+  \item \textbf{SDG 9 (Industry, Innovation and Infrastructure), Target 9.1:} the system is a low-cost, open-source approach to upgrading existing infrastructure: the optional hardware bridge costs an estimated INR 6,000--8,000 in components (an estimate, not yet built).
+  \item \textbf{SDG 13 (Climate Action):} shorter queues and fewer stops reduce idling time and therefore fuel use and emissions. The project does not measure emissions; this is an expected, unquantified effect.
+\end{itemize}
+
+\section{Stakeholder Impact Analysis}
+
+\begin{table}[H]
+\centering
+\caption{Stakeholder Impact Matrix}
+\label{tab:stakeholders}
+\small
+\begin{tabular}{@{}p{4cm}p{2.5cm}p{8cm}@{}}
+\toprule
+\textbf{Stakeholder Group} & \textbf{Type} & \textbf{Nature of Impact} \\
+\midrule
+Commuters and drivers (cars, motorcycles, auto-rickshaws, buses, trucks) & Primary & Shorter waiting at junctions; fewer stops \\
+Emergency services (ambulance, fire) & Primary & Faster, safe passage through junctions through preemption \\
+Municipal and traffic authorities & Secondary & Low-cost, transparent controller with bounded red time and auditable safety; reproducible evaluation method \\
+Researchers and students & Secondary & Open-source simulator, baselines and experiment scripts that regenerate every table \\
+Residents and the environment & Tertiary & Less idling and congestion near junctions (expected, not measured) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Ethical Considerations}
+\textbf{Data privacy.} The project uses no real camera footage and no personal data: frames are rendered from the simulator and the ground truth is exact. A real deployment with cameras must count vehicles without storing images or identifying plates or people, and comply with applicable privacy rules. \textbf{Bias.} The density weights are heuristic and favour larger vehicles and emergency vehicles by design; they were tested, and calibrated on held-out seeds, but only in simulation, and should be reviewed against local passenger-car-unit factors so that no road user class is systematically disadvantaged. \textbf{Safety.} Green times are bounded, change intervals are never shortened and the signal audit checks each step, but the controller has not been tested on a real junction and must not be deployed on live roads without independent safety validation and a fail-safe fallback to fixed timing. \textbf{Misuse.} Emergency preemption could be abused if the emergency flag can be spoofed; a real system needs authenticated vehicle-to-infrastructure messages and rate limits. \textbf{Honesty of claims.} Results are reported as simulation results, negative findings (the weak vision pipeline, the capacity loss of the original rule, the equal performance of simpler baselines) are stated plainly, and the use of an AI assistant in development and writing is disclosed.

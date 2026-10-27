@@ -1,0 +1,134 @@
+%% appendices/AppendixB_Code.tex
+%% Project Snapshots and Description (code read from the repository by report/build_report.py)
+\chapter{Project Snapshots and Description}
+\label{app:snapshots}
+
+\section{Module 1: Density Score (\texttt{decision\_engine/density.py})}
+\textbf{Description:} The class-weighted, queue-aware density score of Eq.~\eqref{eq:density}: every vehicle contributes its class weight times a multiplier that is 1.5 if the vehicle is queued and 0.5 if it is moving. Default weights are in \texttt{DENSITY\_WEIGHTS} (car 1.0, motorcycle 0.5, auto-rickshaw 0.8, bus 3.0, truck 2.5, ambulance and fire truck 6.0).
+
+\begin{lstlisting}[language=Python, caption={[Module 1] Lane density score}]
+def lane_density_score(
+    lane: Lane,
+    weights: Mapping[VehicleType, float] = DENSITY_WEIGHTS,
+    queued_multiplier: float = QUEUED_MULTIPLIER,
+    moving_multiplier: float = MOVING_MULTIPLIER,
+) -> float:
+    score = 0.0
+    for vehicle in lane.vehicles:
+        weight = weights[vehicle.vehicle_type]
+        score += weight * (queued_multiplier if Lane._is_queued(vehicle) else moving_multiplier)
+    return score
+\end{lstlisting}
+
+\section{Module 2: Adaptive Controller with Discharge Hold (\texttt{decision\_engine/adaptive\_controller.py})}
+\textbf{Description:} The green-end decision of Eqs.~\eqref{eq:green} and~\eqref{eq:hold}. A green never ends before the minimum or runs past the maximum; between them it may end only when the served direction no longer out-scores the waiting one by the threshold and, with the hold, has gapped out.
+
+\begin{lstlisting}[language=Python, caption={[Module 2] Green-end decision}]
+def _should_end_phase(self, intersection: Intersection) -> bool:
+    if self.phase not in _GREEN_GROUP:
+        return self._elapsed_in_phase >= _FIXED_DURATIONS[self.phase]
+
+    if self._elapsed_in_phase >= self.max_green_s:
+        return True
+    if self._elapsed_in_phase < self.min_green_s:
+        return False
+    return self._green_ready_to_end(intersection)
+
+def _green_ready_to_end(self, intersection: Intersection) -> bool:
+    """Between min and max green: may the current green end now? The
+    one decision a subclass replaces (see decision_engine/baselines.py);
+    the phase sequence, yellow, all-red and green bounds stay shared."""
+    if self.hold_while_discharging and self._still_discharging(intersection, _GREEN_GROUP[self.phase]):
+        return False
+    active_score = self._group_density(intersection, _GREEN_GROUP[self.phase])
+    waiting_score = self._group_density(intersection, _WAITING_GROUP[self.phase])
+    return active_score <= waiting_score * self.extension_threshold
+
+def _still_discharging(self, intersection: Intersection, group) -> bool:
+    zone_start = STOP_LINE_POS_M - self.discharge_zone_m
+    return any(
+        zone_start <= vehicle.position_m < STOP_LINE_POS_M
+        for name in group
+        for lane in intersection.roads[name].lanes
+        for vehicle in lane.vehicles
+    )
+\end{lstlisting}
+
+\section{Module 3: Haar-Cascade Vehicle Detector (\texttt{vision/detector.py})}
+\textbf{Description:} The detector applied to each virtual camera frame; it localizes vehicles but does not classify them.
+
+\begin{lstlisting}[language=Python, caption={[Module 3] Detector}]
+def detect(self, frame_bgr: np.ndarray) -> list[Detection]:
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    if self.equalize:
+        gray = cv2.equalizeHist(gray)
+
+    # The cascade's own training window (20x20) is close to or larger
+    # than our rendered vehicles at native resolution, so it can barely
+    # ever fire. Upscaling before detection - then mapping boxes back
+    # down - gives it a realistic chance without inflating frame/JPEG
+    # size for anything else that consumes the raw frame.
+    upscaled = cv2.resize(gray, None, fx=self.upscale_factor, fy=self.upscale_factor)
+
+    rects, _reject_levels, level_weights = self._cascade.detectMultiScale3(
+        upscaled,
+        scaleFactor=DETECT_SCALE_FACTOR,
+        minNeighbors=self.min_neighbors,
+        minSize=DETECT_MIN_SIZE_PX,
+        outputRejectLevels=True,
+    )
+
+    detections = []
+    for (x, y, w, h), weight in zip(rects, level_weights):
+        # `weight` is the cascade's final-stage decision margin, not a
+        # calibrated probability - its scale is specific to this cascade
+        # and was found empirically. Treated as a relative confidence,
+        # clipped to [0, 1].
+        confidence = float(min(1.0, max(0.0, weight / 2.0)))
+        detections.append(
+            Detection(
+                int(x / self.upscale_factor),
+                int(y / self.upscale_factor),
+                int(w / self.upscale_factor),
+                int(h / self.upscale_factor),
+                confidence,
+            )
+        )
+    return detections
+\end{lstlisting}
+
+\section{Module 4: Database Models (\texttt{database/models.py})}
+\textbf{Description:} The two-table snapshot split (a snapshot and one row per road) used by the analytics collector, as in Table~\ref{tab:schema}.
+
+\begin{lstlisting}[language=Python, caption={[Module 4] Snapshot tables}]
+class Snapshot(Base):
+    __tablename__ = "snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("simulation_runs.id"))
+    sim_time: Mapped[float] = mapped_column(Float)
+    captured_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    run: Mapped["SimulationRun"] = relationship(back_populates="snapshots")
+    road_snapshots: Mapped[list["RoadSnapshot"]] = relationship(back_populates="snapshot")
+
+class RoadSnapshot(Base):
+    __tablename__ = "road_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(ForeignKey("snapshots.id"))
+    road_name: Mapped[str] = mapped_column(String(16))
+    queue_length: Mapped[int] = mapped_column(Integer)
+    vehicle_count: Mapped[int] = mapped_column(Integer)
+    density_score: Mapped[float] = mapped_column(Float)
+    light_state: Mapped[str] = mapped_column(String(16))
+    has_emergency_vehicle: Mapped[bool] = mapped_column(Boolean)
+    total_exited: Mapped[int] = mapped_column(Integer)
+    total_wait_time_s: Mapped[float] = mapped_column(Float)
+
+    snapshot: Mapped["Snapshot"] = relationship(back_populates="road_snapshots")
+\end{lstlisting}
+
+\vspace{0.5cm}
+\noindent\textbf{Full Source Code Repository:}
+\url{https://github.com/shivam-G05/Smart-Traffic-Management}

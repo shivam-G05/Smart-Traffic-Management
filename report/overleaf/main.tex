@@ -1,0 +1,144 @@
+%% ============================================================
+%% main.tex  ---  B.Tech Final Year Project Report (2026)
+%% Ajay Kumar Garg Engineering College | AKTU Lucknow
+%% Compiler: pdfLaTeX  (Overleaf Free Plan)
+%% Bibliography: BibTeX  (NOT Biber)
+%% ============================================================
+
+\documentclass[a4paper,12pt]{report}
+
+\usepackage[top=30mm, bottom=25mm, left=35mm, right=20mm]{geometry}
+\usepackage{times}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{multicol}
+\usepackage{multirow}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+% Fix headheight warning
+\setlength{\headheight}{14pt}
+
+% Chapter title style
+\titleformat{\chapter}[display]
+  {\normalfont\Large\bfseries\centering}
+  {\chaptertitlename\ \thechapter}{10pt}{\Huge}
+\titlespacing*{\chapter}{0pt}{-20pt}{20pt}
+
+% Header / footer
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\textit{\reporttitle}}
+\fancyhead[R]{\small\textit{AKGEC, Ghaziabad}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% Code listings style
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue}\bfseries,
+  commentstyle=\color{green!60!black},
+}
+
+%% ============================================================
+%%  EDIT BELOW -- Fill in your project details
+%% ============================================================
+\newcommand{\reporttitle}{Smart Traffic Control System Using Vehicle Density Analysis}
+\newcommand{\projectgroupid}{2023-27/IT/SECTION/GID}
+\newcommand{\students}{%
+  Madhav Goel (Roll No.)\\
+  Akash Varshney (Roll No.)\\
+  Abhisekh Chaudhary (Roll No.)\\
+  Shivam Goel (Roll No.)}
+\newcommand{\mentor}{Ruchi Gupta}
+\newcommand{\hod}{Dr. Rahul Sharma}
+\newcommand{\dept}{Department of Information Technology}
+\newcommand{\college}{AJAY KUMAR GARG ENGINEERING COLLEGE, GHAZIABAD}
+\newcommand{\university}{DR. A.P.J. ABDUL KALAM TECHNICAL UNIVERSITY, LUCKNOW}
+\newcommand{\submissiondate}{\today}
+%% ============================================================
+
+\begin{document}
+
+%% ---- TITLE PAGE --------------------------------------------
+\begin{titlepage}
+  \thispagestyle{empty}
+  \begin{flushright}
+    \small\textbf{Group ID: \projectgroupid}
+  \end{flushright}
+  \centering\vspace*{0.5cm}
+
+  {\large\textbf{A Project Report on}\par}\vspace{0.5cm}
+  {\LARGE\textbf{\reporttitle}\par}\vspace{0.5cm}
+
+  {Submitted in Partial Fulfillment of the Requirements for the Degree of\par}
+  \vspace{0.4cm}
+  {\Large\textbf{Bachelor of Technology in Information Technology}\par}
+  \vfill
+
+  {Submitted by\par}\vspace{0.4cm}
+  {\large\students\par}\vfill
+
+  {Under the Supervision of\par}\vspace{0.3cm}
+  {\large\textbf{\mentor}\par}\vfill
+
+  \includegraphics[width=3cm]{AKGEC_1_0.png}\vspace{0.4cm}
+
+  {\large\textbf{\dept}\par}
+  {\large\textbf{\college}\par}
+  {\large\textbf{\university}\par}\vfill
+  {\large\submissiondate\par}\vspace*{0.5cm}
+\end{titlepage}
+
+%% ---- FRONT MATTER (roman numbering) -----------------------
+\pagenumbering{roman}
+\onehalfspacing
+
+\newpage\input{frontmatter/Declaration}
+\newpage\input{frontmatter/Certificate}
+\newpage\input{frontmatter/Acknowledgements}
+\newpage\input{frontmatter/Abstract}
+
+\newpage\tableofcontents
+\newpage\listoffigures
+\newpage\listoftables
+
+%% ---- MAIN CHAPTERS (arabic numbering) ---------------------
+\newpage\pagenumbering{arabic}
+
+\input{chapters/Chapter1_Introduction}
+\input{chapters/Chapter2_LiteratureReview}
+\input{chapters/Chapter3_Methodology}
+\input{chapters/Chapter4_Implementation}
+\input{chapters/Chapter5_ResultsDiscussion}
+\input{chapters/Chapter6_SocietalImpact}
+\input{chapters/Chapter7_UHV}
+\input{chapters/Chapter8_Conclusion}
+
+%% ---- REFERENCES -------------------------------------------
+\newpage
+\addcontentsline{toc}{chapter}{References}
+\bibliographystyle{IEEEtran}
+\bibliography{References}
+
+%% ---- APPENDICES -------------------------------------------
+\appendix
+\input{appendices/AppendixA_UNAI_Certificate}
+\input{appendices/AppendixB_Code}
+\input{appendices/AppendixC_CV}
+
+\end{document}
