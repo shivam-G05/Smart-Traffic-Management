@@ -3,51 +3,50 @@
 \label{chap:impl}
 
 \section{System Architecture Overview}
-The implementation is a layered, simulation-first system (about six thousand lines of Python plus a React front end), built milestone by milestone. A headless simulation engine advances the junction in 50~ms steps (20~Hz). In each step the active controller first sets the light of every approach, and then all vehicles move. The decision engine scores each approach from the current vehicle states and decides when a green ends; the emergency-preemption wrapper overrides it when an emergency vehicle approaches. A vision pipeline renders a virtual camera frame per approach at 2~Hz and passes it to the detector and tracker; its results are shown on the dashboard and compared with ground truth, but control decisions use the simulator's vehicle states, which corresponds to ideal detection. A FastAPI backend runs the simulation, streams the junction state over WebSockets at 10~Hz, and stores snapshots and signal events; a React dashboard draws the junction to scale; and an optional driver mirrors the signal on real lights (Figure~\ref{fig:architecture}).
+The implementation is a layered, simulation-first system (about 3,600 lines of Python, excluding tests and experiment scripts, plus a React front end), built milestone by milestone. A headless engine advances the junction in 50~ms steps (20~Hz): in each step the active controller sets the light of every approach and then all vehicles move. The decision engine scores each approach and decides when a green ends; the preemption wrapper overrides it when an emergency vehicle approaches. A vision pipeline renders a virtual camera frame per approach at 2~Hz for the detector and tracker; its output is shown on the dashboard and compared with ground truth, but control uses the simulator's vehicle states (ideal detection). A FastAPI backend runs the simulation, streams the state over WebSockets at 10~Hz and stores snapshots; a React dashboard draws the junction; and an optional driver mirrors the signal on real lights (Figure~\ref{fig:architecture}).
 
 \section{Module-wise Description}
 
 \subsection{Module 1: Simulation Engine}
-\textbf{Package:} \texttt{simulation/}. It contains the vehicle, lane, road, traffic-light and intersection entities, the engine loop, and the controller interface. Vehicles of seven classes (Table~\ref{tab:vehicles}) follow the Gipps-type safe-speed rule~\eqref{eq:safe} with an optional driver reaction time. The \texttt{SignalControllerBase} strategy interface (an \texttt{update} per time step and a phase name) is the one seam that lets the fixed-timer, adaptive, comparison and preemption controllers plug in without any change to the engine, the backend or the front end. Optional behaviours used by the experiments, all off by default, are the entry queue, entry at the highest safe speed, the reaction time, a time-varying demand profile and a sensor model. A \texttt{SignalAudit} checks every step for conflicting greens and shortened change intervals.
+\textbf{Package:} \texttt{simulation/}. It holds the vehicle, lane, road, traffic-light and intersection entities, the engine loop and the controller interface. Vehicles of seven classes (Table~\ref{tab:vehicles}) follow the safe-speed rule~\eqref{eq:safe}, with an optional reaction time~\eqref{eq:safetau}. The \texttt{SignalControllerBase} strategy interface is the one seam that lets the fixed-timer, adaptive, comparison and preemption controllers plug in without changing the engine, backend or front end. Optional behaviours used by the experiments, all off by default, are the entry queue, entry at the highest safe speed, the reaction time, a time-varying demand profile and a sensor model. A \texttt{SignalAudit} checks every step for conflicting greens and shortened change intervals.
 
 \subsection{Module 2: Decision Engine}
-\textbf{Package:} \texttt{decision\_engine/}. \texttt{density.py} implements the class-weighted, queue-aware score of Eq.~\eqref{eq:density}. \texttt{adaptive\_controller.py} implements the bounded green extension of Eq.~\eqref{eq:green} and, with \texttt{hold\_while\_discharging}, the discharge hold of Eq.~\eqref{eq:hold}. \texttt{baselines.py} and \texttt{webster.py} hold the four comparison controllers, which reuse the adaptive controller's phase sequence and change intervals and replace only the single decision of whether a green may end. \texttt{emergency\_preemption.py} wraps any phase-based controller with the entry, priority-green and release states of Figure~\ref{fig:preemption}. \texttt{sensing.py} wraps a controller so that it sees the junction through a sensor model (a camera's field of view, a refresh rate, missed detections, no vehicle classes and phantom detections) while emergency preemption still reads the true flags.
+\textbf{Package:} \texttt{decision\_engine/}. \texttt{density.py} implements the score of Eq.~\eqref{eq:density}; \texttt{adaptive\_controller.py} the green extension of Eq.~\eqref{eq:green} and, with \texttt{hold\_while\_discharging}, the discharge hold of Eq.~\eqref{eq:hold}; \texttt{baselines.py} and \texttt{webster.py} the four comparison controllers, which reuse the phase sequence and change intervals and replace only the decision of whether a green may end; \texttt{emergency\_preemption.py} the preemption wrapper of Figure~\ref{fig:preemption}; and \texttt{sensing.py} a wrapper that lets a controller see the junction through a sensor model (limited view, refresh rate, missed detections, no classes, phantom detections).
 
 \subsection{Module 3: Vision Pipeline}
-\textbf{Package:} \texttt{vision/}. \texttt{camera.py} renders a virtual camera frame of the 60~m before each stop line; \texttt{detector.py} is the Haar-cascade vehicle detector; \texttt{tracker.py} is the ByteTrack-style tracker with a constant-velocity Kalman filter and Hungarian assignment; and \texttt{pipeline.py} ties them together and compares detections and tracks with ground truth. Detection takes about 137~ms per frame on an Intel Core i5-12450H laptop CPU in a single process, whereas a control decision takes about 0.01~ms.
+\textbf{Package:} \texttt{vision/}. \texttt{camera.py} renders the virtual camera frames, \texttt{detector.py} is the Haar-cascade detector, \texttt{tracker.py} the ByteTrack-style tracker, and \texttt{pipeline.py} compares detections and tracks with ground truth. In two single-process runs of 400 frames on a 12th Gen Intel Core i5-12450H laptop CPU, detection took 103 and 171~ms per frame on average (it varies with the CPU's power state), whereas a control decision took 0.002--0.004~ms.
 
 \subsection{Module 4: Backend and Analytics}
-\textbf{Packages:} \texttt{backend/app/}, \texttt{analytics/}. A FastAPI application runs the simulation, vision and analytics tasks, and exposes REST endpoints and WebSocket channels (Table~\ref{tab:api}). The analytics collector samples queue, delay, throughput and congestion level at 1~Hz, raises a high-traffic alert when an approach stays at high density for 3~s, and exports reports as CSV or JSON. A comparison runner executes a second simulation with the same random seed under another controller, so the dashboard can show fixed and adaptive control side by side.
+\textbf{Packages:} \texttt{backend/app/}, \texttt{analytics/}. A FastAPI application runs the simulation, vision and analytics tasks and exposes REST endpoints and WebSocket channels (Table~\ref{tab:api}). The analytics collector samples queue, delay, throughput and congestion level at 1~Hz, raises a high-traffic alert when an approach stays at high density for 3~s, and exports reports as CSV or JSON. A comparison runner executes a second simulation with the same seed under another controller, so the dashboard can show fixed and adaptive control side by side.
 
 \begin{table}[H]
 \centering
 \caption{Backend interfaces}
 \label{tab:api}
 \small
-\begin{tabular}{@{}p{5.2cm}p{9.5cm}@{}}
+\begin{tabular}{@{}p{5.6cm}p{9.1cm}@{}}
 \toprule
 \textbf{Endpoint} & \textbf{Purpose} \\
 \midrule
-GET /api/health & Liveness check used by the Docker health check \\
-GET /api/intersection/state & Current junction state (vehicles, lights, phase) \\
-GET /api/vision/latest & Latest detections and tracks per approach \\
+GET /api/health & Liveness check (Docker health check) \\
+GET /api/intersection/state & Current junction state \\
+GET /api/vision/latest & Latest detections and tracks \\
 GET /api/analytics/history/\{road\} & Time series for one approach \\
-GET /api/analytics/summary & Aggregate queue, delay, throughput and congestion \\
+GET /api/analytics/summary & Aggregate queue, delay, throughput, congestion \\
 GET /api/reports/export & Report export as CSV or JSON \\
-GET /api/comparison/latest & Fixed-versus-adaptive comparison metrics \\
-GET /api/explain & Plain-language explanation of each displayed quantity \\
+GET /api/comparison/latest & Fixed-versus-adaptive comparison \\
+GET /api/explain & Explanation of each displayed quantity \\
 GET /api/signals/status & Signal state polled by the hardware driver \\
-WS /ws/simulation, /ws/simulation/shadow & Live junction state; second simulation for comparison \\
-WS /ws/vision, /ws/analytics, /ws/comparison & Live detections, analytics and comparison data \\
+WS /ws/simulation, /ws/simulation/shadow, /ws/vision, /ws/analytics, /ws/comparison & Live junction state, second simulation, detections, analytics and comparison \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Module 5: Dashboard and Hardware Bridge}
-\textbf{Directories:} \texttt{frontend/}, \texttt{hardware/}. The React dashboard (Section~\ref{sec:ui}) consumes the WebSocket channels. The hardware bridge is a pair of drivers, a Python driver for a Raspberry Pi and an Arduino/C++ sketch for an ESP32, that poll \texttt{GET /api/signals/status} at 5~Hz and drive 12 LEDs (red, yellow and green for each of four approaches, each through a 220~$\Omega$ resistor); for larger lamps an opto-isolated relay module is to be used. Nothing in the simulation, decision engine or backend changes, since the driver is a client. The bridge has not yet been built and tested on a physical board.
+\textbf{Directories:} \texttt{frontend/}, \texttt{hardware/}. The React dashboard (Section~\ref{sec:ui}) consumes the WebSocket channels. The hardware bridge is a Python driver for a Raspberry Pi and an Arduino/C++ sketch for an ESP32 that poll \texttt{GET /api/signals/status} at 5~Hz and drive 12 LEDs (red, yellow and green for four approaches, each through a 220~$\Omega$ resistor); larger lamps need an opto-isolated relay. Since the driver is only a client, nothing in the simulation, decision engine or backend changes. The bridge has not yet been built and tested on a physical board.
 
 \section{Database / Data Model}
-Persistence uses SQLAlchemy 2.0 with SQLite by default (PostgreSQL-ready). A snapshot split into two tables avoids repeating each of the four roads' columns in one wide table and matches the per-road query shape of the analytics collector. Table~\ref{tab:schema} lists the four tables.
+Persistence uses SQLAlchemy 2.0 with SQLite by default (PostgreSQL-ready). Splitting a snapshot into two tables avoids repeating each road's columns in one wide table and matches the analytics collector's per-road queries (Table~\ref{tab:schema}). A snapshot is stored every 10th one-hertz sample, i.e.\ every 10~s, and signal events are recorded as they occur; in Docker the SQLite file lives in a named volume, so history survives a restart.
 
 \begin{table}[H]
 \centering
@@ -66,10 +65,8 @@ signal\_events & id, run\_id (FK), sim\_time, road\_name, event\_type, phase\_na
 \end{tabular}
 \end{table}
 
-A snapshot is stored every 10~s of simulated time, and signal events (phase changes and preemption states) are recorded as they occur. In the Docker deployment the SQLite file lives in a named volume, so history survives a restart.
-
 \section{Key Algorithms}
-The core algorithms are the density score, the green-end decision with discharge hold, and the preemption state machine. In pseudocode, the green-end decision evaluated at every step is:
+The core algorithms are the density score, the green-end decision with discharge hold, and the preemption state machine. The green-end decision evaluated at every step is, in pseudocode:
 
 \begin{lstlisting}[language=Python, caption={Green-end decision with discharge hold}]
 def green_may_end(t_g, D_A, D_W, near_stop_line):
@@ -82,15 +79,15 @@ def green_may_end(t_g, D_A, D_W, near_stop_line):
     return D_A <= THETA * D_W             # theta = 1.1
 \end{lstlisting}
 
-The preemption wrapper moves through the states \emph{inner controller}, \emph{entry yellow}, \emph{all-red clearing}, \emph{priority green}, \emph{release yellow} and \emph{release all-red}, so every path from one direction's green to the other's passes through a full yellow and all-red interval (Figure~\ref{fig:preemption}). The per-step safety audit checks this property in every run. Appendix~\ref{app:snapshots} lists the source of the main functions.
+The preemption wrapper moves through \emph{inner controller}, \emph{entry yellow}, \emph{all-red clearing}, \emph{priority green}, \emph{release yellow} and \emph{release all-red}, so every path from one direction's green to the other's passes through a full yellow and all-red (Figure~\ref{fig:preemption}); the per-step audit checks this in every run. Appendix~\ref{app:snapshots} lists the source of the main functions.
 
 \section{User Interface}
 \label{sec:ui}
-The React dashboard draws the junction to scale on an HTML5 canvas from the streamed JSON state (vehicle positions, speeds and light states). Its components are: the intersection canvas; signal-status and per-road statistics cards with the density score and congestion level; a camera-feed grid with detection and tracking overlays; a traffic-alert banner; an analytics dashboard with historical graphs and report export; a comparison view that runs fixed and adaptive control on the same seed and shows the savings; and a ``how it works'' page and explain panel that describe each displayed quantity.
+The React dashboard draws the junction to scale on an HTML5 canvas from the streamed state. Its components are the intersection canvas; signal-status and per-road statistics cards with density score and congestion level; a camera-feed grid with detection and tracking overlays; a traffic-alert banner; an analytics dashboard with historical graphs and report export; a comparison view that runs fixed and adaptive control on the same seed; and a ``how it works'' page and explain panel.
 
 \section{Development and Deployment}
 \begin{itemize}
-  \item \textbf{Operating System:} Windows 11 for development; Ubuntu in the continuous-integration runners and Docker containers.
-  \item \textbf{Key Libraries:} Python 3.12; FastAPI 0.115.0, Uvicorn 0.30.6, Pydantic 2.9.2, SQLAlchemy 2.0.35, aiosqlite 0.20.0, NumPy 2.1.2, SciPy 1.14.1, OpenCV (headless) 4.10.0.84, pytest 8.3.3; React 18.3, Vite 5.4, Tailwind CSS 3.4, Recharts 2.12.
-  \item \textbf{Deployment:} \texttt{docker compose up --build} starts two containers, the backend (port 8000, with a health check) and the dashboard behind nginx (port 8080); the SQLite file persists in a named volume. A GitHub Actions workflow runs the 119-test backend suite, the front-end build and a Docker build with smoke test on every push. The optional hardware drivers run on a Raspberry Pi or ESP32.
+  \item \textbf{Operating System:} Windows 11 for development; Ubuntu in CI runners and Docker containers.
+  \item \textbf{Key Libraries:} Python 3.12; FastAPI 0.115.0, SQLAlchemy 2.0.35, NumPy 2.1.2, SciPy 1.14.1, OpenCV (headless) 4.10.0.84, pytest 8.3.3; React 18.3, Vite 5.4, Tailwind CSS 3.4, Recharts 2.12.
+  \item \textbf{Deployment:} \texttt{docker compose up --build} starts the backend (port 8000, with a health check) and the dashboard behind nginx (port 8080). A GitHub Actions workflow runs the 119-test suite, the front-end build and a Docker build with smoke test on every push.
 \end{itemize}

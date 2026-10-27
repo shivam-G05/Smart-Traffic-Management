@@ -362,6 +362,8 @@ add(
 
 // Vision
 const V = N.vision;
+// Single-process timing runs (scripts/timing_check.py).
+const TM = ["timing.json", "timing_run2.json"].map((f) => JSON.parse(fs.readFileSync(path.join(HERE, "..", "results", f), "utf8")));
 const detEntries = Object.entries(V.detectors);
 const trk0 = Object.values(V.tracking)[0];
 const f1 = (x) => (x === null || Number.isNaN(x) ? "n/a" : x.toFixed(1));
@@ -381,7 +383,10 @@ add(
         "result, as the pipeline gives no usable kinematics for moving traffic. "
       : "") +
     "Removing the low-confidence matching stage or the motion model changed little, because recall is the limit. " +
-    "Detection took about 137 ms per frame on an Intel Core i5-12450H CPU against 0.01 ms per control decision."),
+    `In two single-process runs of ${TM[0].frames} frames on an Intel Core i5-12450H laptop CPU, detection took ` +
+    `${Math.min(...TM.map((t) => t.detect_ms_mean)).toFixed(0)} and ${Math.max(...TM.map((t) => t.detect_ms_mean)).toFixed(0)} ms ` +
+    `per frame on average (it varies with the CPU's power state), against ` +
+    `${Math.min(...TM.map((t) => t.decision_ms_mean)).toFixed(3)}–${Math.max(...TM.map((t) => t.decision_ms_mean)).toFixed(3)} ms per control decision.`),
   I.table(6, "Detector accuracy and ablation (synthetic frames)",
     ["Detector variant", "Precision (%)", "Recall (%)", "Det./frame"],
     detEntries.map(([name, dd]) => [name, dd.detections_per_frame < 0.01 ? "—" : f1(dd.precision), f1(dd.recall),

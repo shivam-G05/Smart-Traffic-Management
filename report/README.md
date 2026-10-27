@@ -13,3 +13,8 @@ To use it on Overleaf: open your copy of the template project, upload the conten
 `overleaf/` over it (keep the existing `AKGEC_1_0.png` logo), set main.tex as the main document.
 Fill in the placeholders marked `(Roll No.)`, `XXXXXXXXXX`, `[to be filled ...]`, the group ID in
 main.tex and the personal fields of the CVs (Appendix C).
+
+`python report/verify_report.py` checks the report against reality: every constant and formula it states against the
+source code (and Eq. 1-2 and the Webster formula numerically), library versions, the 119-test count and the CPU model,
+every table number recomputed from the raw CSV/JSON files in `results/` with an independent implementation, and every
+number in the report against the paper's PDF text. `scripts/timing_check.py` measures the detection and decision times.

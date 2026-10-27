@@ -19,6 +19,18 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "report" / "overleaf"
 N = json.loads((ROOT / "paper" / "build" / "numbers.json").read_text(encoding="utf-8"))
 L = N["labels"]
+TM = [json.loads((ROOT / "results" / f).read_text(encoding="utf-8")) for f in ("timing.json", "timing_run2.json")]
+
+
+def sloc():
+    """Physical lines of project Python (no tests, no experiment scripts), rounded to 100."""
+    n = 0
+    for d in ["simulation", "decision_engine", "vision", "analytics", "database", "shared", "backend/app", "hardware"]:
+        for f in (ROOT / d).rglob("*.py"):
+            n += len(f.read_text(encoding="utf-8").splitlines())
+    return round(n, -2)
+
+
 T2, O, Oon, S = N["table2_on"], N["over_off"], N["over_on"], N["safety"]
 PK, TC, OC, ZC, SN, CB, V = N["peak"], N["table2_cal"], N["over_cal"], N["zone_cal"], N["sensing"], N["calibration"], N["vision"]
 T3, K0, K1 = N["table3"], N["kinematics"]["tau0"], N["kinematics"]["tau16"]
@@ -191,21 +203,6 @@ TBL_sweep = table("Delay including vehicles still waiting to enter (s), preempti
                   "l" + "c" * len(RATIOS),
                   "Demand as a multiple of the fixed-time capacity; mean over ten paired seeds. Vehicles still waiting at the end "
                   "of a run count with the delay accrued so far, so values above capacity are lower bounds.")
-TBL_thru = table("Throughput (veh/h), preemption off", "tab:throughput",
-                 ["Controller", *[Raw(f"{float(r)}$\\times$") for r in RATIOS]],
-                 [[L[c], *[f"{sw(r, c, 'throughput_vph')['mean']:.0f}" for r in RATIOS]] for c in SWEEP],
-                 "l" + "c" * len(RATIOS), "Vehicles served per hour after the warm-up; ten paired seeds.")
-queue_rows = []
-for r in (cap_r, hi_r):
-    for c in SWEEP:
-        queue_rows.append([f"{float(r)}$\\times$", L[c], f"{sw(r, c, 'queue_growth_vpm')['mean']:.1f}",
-                           f"{sw(r, c, 'spillback_pct')['mean']:.0f}", f"{sw(r, c, 'served_pct')['mean']:.0f}",
-                           f"{sw(r, c, 'final_queue')['mean']:.0f}"])
-TBL_queue = table("Queue growth, spillback and served share at capacity and above", "tab:queue",
-                  ["Demand", "Controller", "Queue growth (veh/min)", "Spillback (% of approach-time)", "Served (%)", "Final queue (veh)"],
-                  [[Raw(x) if i == 0 else x for i, x in enumerate(row)] for row in queue_rows], "llcccc",
-                  "Preemption off; mean of ten paired seeds. Spillback: queue reaches the start of the link.")
-
 peak_rows = [[L[c], f"{PK[c]['peak_queue']['mean']:.0f}", pk_rec(c), f"{PK[c]['spillback_approach_min']['mean']:.0f}",
               f"{PK[c]['peak_throughput_vph']['mean']:.0f}", "---" if c == "fixed" else minus(PK[c]["total_delay_vs_fixed"]["text"])]
              for c in SWEEP if c in PK]
@@ -213,26 +210,18 @@ TBL_peak = table("Sixty-minute peak period: queue, recovery, spillback, throughp
                  ["Controller", "Peak queue (veh)", "Time to recover", "Blocked (approach-min)", "Peak throughput (veh/h)", "Total delay vs fixed"],
                  peak_rows, "lccccc", "Demand ramps from 0.6 to 1.2 times capacity, holds for 15 min and falls back; ten paired seeds; preemption off.")
 
-t3_rows = []
-for lv in LV:
-    for c in ["fixed", "adaptive", "adaptive_hold"]:
-        x = T3[c][lv]
-        t3_rows.append([lv.capitalize(), L[c], f"{x['ev_off']}/{x['ev_on']}", f"{x['ev_delay_off']}→{x['ev_delay_on']}",
-                        f"{x['other_off']}→{x['other_on']}", Raw(f"{minus(x['other_change']['text'])} ({x['other_change']['p']})".replace("<", "$<$"))])
-TBL_pre = table("Effect of emergency preemption", "tab:preemption",
-                ["Demand", "Controller", "EVs off/on", "EV delay (s) off→on", "Other delay (s) off→on", "Other change ($p$)"],
-                t3_rows, "llccc c".replace(" ", ""), "EV: emergency vehicles measured, pooled over ten seeds. Other change: paired change in the mean delay of all "
-                "other vehicles; paired $t$-test $p$-value in parentheses.")
-
 abl_variants = []
 for r in N["ablation"]:
     if r["variant"] not in abl_variants:
         abl_variants.append(r["variant"])
-abl_rows = [[r["variant"], r["level"], r["delay"], r["change"], r["p"], r["green"]] for r in N["ablation"]]
+abl_row = lambda v, lv: next(r for r in N["ablation"] if r["variant"] == v and r["level"] == lv)
+abl_cp = lambda r: "---" if r["change"] in ("—", "-") else f"{r['change']} ({r['p']})"
+abl_rows = [[v.replace(" (weights and multipliers = 1)", "").replace(" (all classes = 1)", "").replace(" (multipliers = 1)", ""),
+             abl_row(v, "medium")["delay"], abl_cp(abl_row(v, "medium")), abl_row(v, "high")["delay"], abl_cp(abl_row(v, "high"))]
+            for v in abl_variants]
 TBL_abl = table("Ablation of the adaptive controller", "tab:ablation",
-                ["Variant", "Demand", "Mean delay (s)", "Change", "$p$", "Green (s)"],
-                [[tx(a) for a in row] for row in abl_rows], "llcccc",
-                "Preemption enabled unless stated; ten paired seeds per row; change relative to the reference at the same demand.")
+                ["Variant", "Delay medium (s)", "Change ($p$)", "Delay high (s)", "Change ($p$)"], abl_rows, "lcccc",
+                "Preemption enabled unless stated; ten paired seeds per row; change relative to the adaptive reference at the same demand.")
 
 det_rows = [[n, "---" if x["detections_per_frame"] < 0.01 else f1(x["precision"]), f1(x["recall"]), f"{x['detections_per_frame']:.2f}"]
             for n, x in V["detectors"].items()]
@@ -269,17 +258,13 @@ TBL_cal = table("Main comparisons repeated with calibrated kinematics", "tab:cal
                 "Gap-out controllers use the 10 m zone unless a re-tuned zone is stated.")
 
 
-def sn_cell(cond, name, c):
-    x = snRow(cond, name)[c]
-    return Raw(f"{x['mean']:.1f}" if name == "Exact states" else f"{x['mean']:.1f} ({minus(x['vs_exact']['text'])})")
-
-
-TBL_sn1 = table("Delay under imperfect sensing (s), medium demand", "tab:sensing-med", ["Sensing", *[L[c] for c in snCtrl]],
-                [[n, *[sn_cell(snMed, n, c) for c in snCtrl]] for n in snNames], "l" + "c" * len(snCtrl),
-                f"Change relative to the same controller with exact states in brackets. Fixed plan (needs no sensing): {tx(snMed['fixed'])} s.")
-TBL_sn2 = table("Delay under imperfect sensing (s), 0.9 times capacity", "tab:sensing-cap", ["Sensing", *[L[c] for c in snCtrl]],
-                [[n, *[sn_cell(snCap, n, c) for c in snCtrl]] for n in snNames], "l" + "c" * len(snCtrl),
-                f"Delay includes time waiting to enter the road; preemption off. Fixed plan: {tx(snCap['fixed'])} s.")
+short = lambda n: n.replace(" (60 m, 2 Hz, no classes)", "").replace("Measured Haar", "Haar").replace(" per approach", "")
+TBL_sn = table("Delay under imperfect sensing (s): medium demand / 0.9 times capacity", "tab:sensing",
+               ["Sensing", *[L[c] for c in snCtrl]],
+               [[short(n), *[f"{snRow(snMed, n)[c]['mean']:.1f} / {snRow(snCap, n)[c]['mean']:.1f}" for c in snCtrl]] for n in snNames],
+               "l" + "c" * len(snCtrl),
+               f"Ten paired seeds. Fixed plan (needs no sensing): {tx(snMed['fixed'])} / {tx(snCap['fixed'])} s. The 0.9$\\times$ column "
+               "excludes preemption and counts time waiting to enter the road.")
 
 params = [("motorcycle", "Motorcycle weight"), ("auto", "Auto-rickshaw weight"), ("bus", "Bus weight"), ("truck", "Truck weight"),
           ("emergency", "Emergency-vehicle weight"), ("queued_ratio", "Queued/moving ratio"), ("theta", "Switching ratio $\\theta$")]
@@ -314,10 +299,14 @@ TBL_cmp = table("Comparison with the strategies of existing work (re-implemented
 # --------------------------------------------------------------------------- values
 
 vals = dict(
-    TBL_t2=TBL_t2, TBL_cap=TBL_cap, TBL_sweep=TBL_sweep, TBL_thru=TBL_thru, TBL_queue=TBL_queue, TBL_peak=TBL_peak, TBL_pre=TBL_pre,
-    TBL_abl=TBL_abl, TBL_det=TBL_det, TBL_trk=TBL_trk, TBL_kin=TBL_kin, TBL_cal=TBL_cal, TBL_sn1=TBL_sn1, TBL_sn2=TBL_sn2,
-    TBL_cb=TBL_cb, TBL_veh=TBL_veh, TBL_cmp=TBL_cmp,
-    runs=fm(S["total_runs"]), hours=fm(S["total_hours"]), preempt=fm(S["table2_on"]["preemptions"]),
+    TBL_t2=TBL_t2, TBL_cap=TBL_cap, TBL_sweep=TBL_sweep, TBL_peak=TBL_peak,
+    TBL_abl=TBL_abl, TBL_det=TBL_det, TBL_trk=TBL_trk, TBL_kin=TBL_kin, TBL_cal=TBL_cal, TBL_sn=TBL_sn,
+    TBL_cb=TBL_cb, TBL_veh=TBL_veh, TBL_cmp=TBL_cmp, sloc=fm(sloc()),
+    timing_text=(f"In two single-process runs of {TM[0]['frames']} frames on a {tx(TM[0]['cpu'].replace('(R)', '').replace('(TM)', ''))} "
+                 f"laptop CPU, detection took {min(t['detect_ms_mean'] for t in TM):.0f} and {max(t['detect_ms_mean'] for t in TM):.0f}~ms per "
+                 f"frame on average (it varies with the CPU's power state), whereas a control decision took "
+                 f"{min(t['decision_ms_mean'] for t in TM):.3f}--{max(t['decision_ms_mean'] for t in TM):.3f}~ms."),
+    runs=fm(S["total_runs"]), hours=fm(round(S["total_hours"])), preempt=fm(S["table2_on"]["preemptions"]),
     redu_ad=redu("adaptive"), redu_web=redu("webster"), redu_act=redu("actuated"), redu_mp=redu("max_pressure"),
     cap_loss=abspct(O["capacity"]["adaptive"]["vs_fixed"]["pct"]), cap_hold=pct(O["capacity"]["adaptive_hold"]["vs_fixed"]["pct"]),
     cap_web=pct(O["capacity"]["webster"]["vs_fixed"]["pct"]), cap_act=pct(O["capacity"]["actuated"]["vs_fixed"]["pct"]),
@@ -526,7 +515,6 @@ MAIN = r"""%% ============================================================
 \appendix
 \input{appendices/AppendixA_UNAI_Certificate}
 \input{appendices/AppendixB_Code}
-\input{appendices/AppendixC_CV}
 
 \end{document}
 """
@@ -625,29 +613,29 @@ CH1 = r"""%% Chapter1_Introduction.tex
 \label{chap:intro}
 
 \section{Background and Motivation}
-Signalized intersections account for a large share of the delay in urban road networks. Many junctions, especially in smaller cities, still run fixed-time plans in which each approach receives a preset green interval regardless of how many vehicles are waiting. Such plans are dimensioned for average flows; when demand fluctuates or is unevenly distributed across approaches, green time is wasted on nearly empty approaches while queues build on busy ones. Traffic in Indian cities adds further variety: motorcycles, auto-rickshaws, buses and trucks share the road with cars, and emergency vehicles must be able to cross a junction without delay.
+Many junctions, especially in smaller cities, still run fixed-time signal plans in which each approach receives a preset green interval regardless of how many vehicles are waiting. Such plans are dimensioned for average flows; when demand fluctuates or is uneven, green time is wasted on nearly empty approaches while queues build on busy ones. Traffic in Indian cities adds variety: motorcycles, auto-rickshaws, buses and trucks share the road with cars, and emergency vehicles must cross a junction without delay.
 
-Traffic-responsive systems such as SCATS and SCOOT adjust timings from detector data, but they rely on dedicated detector infrastructure and centrally managed installations~\cite{ref3,ref4}. Low-cost alternatives estimate density locally with infrared sensors, image-based density classes, deep detectors on camera feeds or existing surveillance cameras, and adapt green time accordingly~\cite{ref1,ref5,ref6,ref8,ref9,ref10}. These low-cost systems are usually demonstrated on a prototype or a few scenarios and report an average improvement over a fixed plan. Four questions are rarely answered: whether timing logic that varies green keeps safe change intervals; how emergency priority interacts with density-based timing; how the controller behaves as demand approaches and exceeds capacity; and how much of a reported gain is due to the density logic at all, rather than to replacing an untuned fixed plan with any demand-responsive one. This project addresses these questions.
+Traffic-responsive systems such as SCATS and SCOOT adjust timings from detector data but rely on dedicated detector infrastructure~\cite{ref3,ref4}. Low-cost alternatives estimate density locally with infrared sensors, image-based density classes or camera detectors~\cite{ref1,ref5,ref6,ref8,ref9,ref10}. These systems are usually demonstrated on a prototype or a few scenarios and report an average improvement over a fixed plan. Four questions are rarely answered: whether variable greens keep safe change intervals; how emergency priority interacts with density-based timing; how the controller behaves as demand approaches and exceeds capacity; and how much of the gain is due to the density logic rather than to replacing an untuned plan with any demand-responsive one.
 
 \section{Problem Statement}
-The lack of a rigorous, reproducible evaluation of low-cost density-based signal control, against strong baselines, near and above capacity, and with verified signal safety, leaves it unclear when such a controller is actually better than a well-tuned fixed or actuated plan. This project addresses the problem by building a complete simulation-first traffic management system with a density-aware controller, an emergency preemption layer and a vision pipeline, and by evaluating it on identical seeded traffic against re-implementations of the strategies used by existing approaches.
+The lack of a rigorous, reproducible evaluation of low-cost density-based signal control, against strong baselines, near and above capacity, and with verified signal safety, leaves it unclear when such a controller is actually better than a well-tuned fixed or actuated plan. This project addresses it by building a complete simulation-first traffic management system and evaluating its density-aware controller on identical seeded traffic against re-implementations of the strategies used by existing approaches.
 
 \section{Research Objectives}
 The key objectives of this project are:
 \begin{enumerate}
-  \item To design and develop a density-aware adaptive signal controller, an emergency-vehicle preemption layer that keeps full change intervals, and a vision pipeline (detection and tracking), together with a live dashboard and a hardware bridge.
-  \item To analyse and evaluate the controller against a fixed plan and four re-implemented strategies (Webster-optimized fixed, vehicle-actuated, max-pressure and three-level density control) below, at and above junction capacity.
-  \item To validate the performance of the system: signal safety at every simulation step, the simulator's queue discharge against Highway Capacity Manual values, the vision pipeline against exact ground truth, and the effect of imperfect sensing.
-  \item To demonstrate the societal relevance of the work: shorter waiting, safer emergency-vehicle passage and reduced idling, in line with the UN Sustainable Development Goals.
+  \item To design and develop a density-aware adaptive signal controller, an emergency-vehicle preemption layer that keeps full change intervals, and a vision pipeline, with a live dashboard and a hardware bridge.
+  \item To analyse and evaluate the controller against a fixed plan and four re-implemented strategies (Webster-optimized, actuated, max-pressure and three-level density control) below, at and above capacity.
+  \item To validate the system: signal safety at every step, simulated queue discharge against Highway Capacity Manual values, the vision pipeline against exact ground truth, and the effect of imperfect sensing.
+  \item To demonstrate the societal relevance of the work in line with the UN Sustainable Development Goals.
 \end{enumerate}
 
 \section{Novelty and Originality}
-Rather than proposing a new detector, this project studies the \emph{timing logic} of a density-based controller under controlled, statistically paired conditions, against re-implementations of the strategies used by existing approaches: a Webster-optimized fixed plan~\cite{ref2}, vehicle-actuated control~\cite{ref23}, max-pressure control~\cite{ref11} and the three-level density control of~\cite{ref1}. The evaluation exposes a failure mode of density-only switching near capacity, which is corrected by a discharge-hold rule taken from actuated control. The role of AI and machine learning is stated plainly: the signal controller is a transparent rule, not a learned policy; machine learning enters through the pre-trained Haar-cascade detector of the vision pipeline, whose accuracy is measured, and through a data-driven calibration of the controller's parameters on held-out simulation seeds. The original contributions are listed in Section~\ref{sec:contrib}.
+Rather than a new detector, this project studies the \emph{timing logic} of a density-based controller under paired, seeded conditions against re-implementations of a Webster-optimized plan~\cite{ref2}, vehicle-actuated control~\cite{ref23}, max-pressure control~\cite{ref11} and the three-level density control of~\cite{ref1}. It exposes a failure mode of density-only switching near capacity and corrects it with a discharge-hold rule taken from actuated control. The role of AI is stated plainly: the controller is a transparent rule, not a learned policy; machine learning enters through the pre-trained Haar-cascade detector, whose accuracy is measured, and through a data-driven calibration of the score on held-out seeds. The contributions are listed in Section~\ref{sec:contrib}.
 
 \section{Scope of the Project}
-\textbf{Included:} a Python microscopic simulator of a four-arm junction with seven vehicle classes; fixed-time, adaptive and four comparison controllers; emergency preemption with a per-step safety audit; a virtual-camera Haar-cascade detector and ByteTrack-style tracker evaluated against exact ground truth; a FastAPI backend with WebSocket streaming and SQLite persistence; a React dashboard with analytics and live fixed-versus-adaptive comparison; a Raspberry Pi/ESP32 signal-driver bridge; Docker packaging and continuous integration; and the experiments reported in Chapter~\ref{chap:results}.
+\textbf{Included:} a microscopic simulator of a four-arm junction with seven vehicle classes; fixed-time, adaptive and four comparison controllers; emergency preemption with a per-step safety audit; a Haar-cascade detector and ByteTrack-style tracker evaluated on synthetic frames; a FastAPI backend with SQLite persistence; a React dashboard; a Raspberry Pi/ESP32 driver; Docker packaging and CI; and the experiments of Chapter~\ref{chap:results}.
 
-\textbf{Excluded:} turning movements, lane changes, pedestrians and multi-junction coordination; recorded or real-world camera footage; closing the control loop on detector output; reinforcement-learning controllers; and tests on a physical junction or a verified hardware deployment. These are left for future work (Section~\ref{sec:future}).
+\textbf{Excluded:} turning movements, lane changes, pedestrians and multi-junction coordination; real camera footage; closing the control loop on detector output; reinforcement learning; and tests on a physical junction or board (Section~\ref{sec:future}).
 
 \section{Report Organisation}
 Chapter 2 presents the literature review.
@@ -664,14 +652,10 @@ CH2 = r"""%% Chapter2_LiteratureReview.tex
 \label{chap:lit}
 
 \section{Historical Overview}
-Fixed-time signal plans are commonly derived from Webster's delay-minimizing cycle-length formula~\cite{ref2}. Networks of signals were later coordinated with traffic-responsive systems: SCATS adjusts splits, cycle lengths and offsets from detector data~\cite{ref3}, and SCOOT optimizes the plan on line from loop-detector flows~\cite{ref4}. Vehicle-actuated control, standard in signal timing practice, extends a green while detectors near the stop line keep registering vehicles and ends it when a gap appears (``gap-out''), within minimum and maximum green limits~\cite{ref23}. Max-pressure control chooses phases from queue differences and has provable throughput guarantees~\cite{ref11}.
-
-On the simulation side, the Gipps car-following model~\cite{ref21} and the Krau{\ss} model with its driver reaction time~\cite{ref25} are the basis of many microscopic simulators, SUMO among them~\cite{ref22}. The Highway Capacity Manual~\cite{ref24} supplies the field saturation-flow and start-up lost-time values against which a simulator can be checked. For sensing, Viola and Jones introduced boosted cascades of Haar-like features~\cite{ref16}, which remain attractive for embedded use because inference is cheap and needs no GPU; multi-object trackers combine a Kalman filter~\cite{ref18} with Hungarian assignment~\cite{ref19}, as in ByteTrack~\cite{ref17}.
+Fixed-time plans are commonly derived from Webster's delay-minimizing cycle formula~\cite{ref2}. SCATS adjusts splits, cycle lengths and offsets from detector data~\cite{ref3}, and SCOOT optimizes the plan on line from loop-detector flows~\cite{ref4}. Vehicle-actuated control extends a green while stop-line detectors keep registering vehicles and ends it when a gap appears (``gap-out''), within minimum and maximum green limits~\cite{ref23}. Max-pressure control chooses phases from queue differences and has provable throughput guarantees~\cite{ref11}. On the simulation side, the Gipps model~\cite{ref21} and the Krau{\ss} model with a driver reaction time~\cite{ref25} underlie many simulators, SUMO among them~\cite{ref22}, and the Highway Capacity Manual~\cite{ref24} supplies field saturation-flow values. For sensing, boosted cascades of Haar-like features~\cite{ref16} remain attractive for embedded use because inference is cheap, and multi-object trackers combine a Kalman filter~\cite{ref18} with Hungarian assignment~\cite{ref19}, as in ByteTrack~\cite{ref17}.
 
 \section{Recent and State-of-the-Art Work}
-Reinforcement-learning controllers have been studied widely, although they must be trained in simulation and their behaviour is harder to bound~\cite{ref12}. Among low-cost density-based systems, Nsofwa and Tembo classify image-based density into low, medium and high levels and adjust signal duration, showing in simulation that this outperforms fixed timing~\cite{ref1}. Kamble et al.\ apply YOLO-based recognition~\cite{ref7} to IP-camera feeds to prioritize the busiest lane~\cite{ref6}; such detectors are accurate but demanding on low-power hardware. Pardeshi et al.\ use passive infrared sensors on an ESP32 platform~\cite{ref5}, and Patil et al.\ and Thomas et al.\ also adapt timing to measured density~\cite{ref9,ref10}. Hu et al.\ estimate density from surveillance cameras~\cite{ref8}. Related systems add incident detection and alerting~\cite{ref13}, AI-based light design~\cite{ref14} or machine-learning traffic prediction on the Edge Impulse platform~\cite{ref15}. Emergency vehicles have been given signal priority based on visual sensing~\cite{ref20}.
-
-These works mainly report an improvement over fixed timing on a prototype or a few scenarios. This project differs in three ways: it compares against strong baselines on identical traffic, it tests demand up to 1.5 times capacity, and it verifies change-interval safety at every simulation step.
+Reinforcement-learning controllers are widely studied but must be trained in simulation and are harder to bound~\cite{ref12}. Nsofwa and Tembo classify image-based density into low, medium and high levels and adjust signal duration, showing in simulation that this outperforms fixed timing~\cite{ref1}. Kamble et al.\ apply YOLO-based recognition~\cite{ref7} to IP-camera feeds to prioritize the busiest lane~\cite{ref6}; Pardeshi et al.\ use passive infrared sensors on an ESP32~\cite{ref5}; Patil et al.\ and Thomas et al.\ adapt timing to measured density~\cite{ref9,ref10}; and Hu et al.\ estimate density from surveillance cameras~\cite{ref8}. Related systems add incident alerts~\cite{ref13}, AI-based light design~\cite{ref14} or traffic prediction~\cite{ref15}, and Nellore and Hancke give emergency vehicles priority from visual sensing~\cite{ref20}. These works mainly report an improvement over fixed timing on a prototype or a few scenarios. This project adds strong baselines on identical traffic, demand up to 1.5 times capacity and a per-step safety check.
 
 \section{Comparative Analysis of Existing Approaches}
 
@@ -700,11 +684,11 @@ Patil et al.~\cite{ref9}; Thomas et al.~\cite{ref10} & 2024, 2025 & Timing adapt
 \section{Identification of Research Gap}
 Based on the review above, the following gaps remain in the existing literature:
 \begin{enumerate}
-  \item Gap 1: Low-cost density-based controllers are usually compared only with fixed timing, so it is unknown how much of their gain comes from the density logic rather than from replacing an untuned plan.
-  \item Gap 2: Behaviour near and above capacity (queue growth, spillback, throughput) and the safety of change intervals under variable greens and emergency preemption are rarely examined.
-  \item Gap 3: The gap between idealized sensing and the accuracy of a real, inexpensive detector is seldom quantified, nor are the density weights validated.
+  \item Gap 1: Low-cost density-based controllers are usually compared only with fixed timing, so it is unknown how much of the gain comes from the density logic.
+  \item Gap 2: Behaviour near and above capacity, and the safety of change intervals under variable greens and emergency preemption, are rarely examined.
+  \item Gap 3: The gap between idealized sensing and a real, inexpensive detector is seldom quantified, nor are the density weights validated.
 \end{enumerate}
-The proposed project directly addresses these gaps by comparing against re-implemented Webster, actuated, max-pressure and density-level strategies on identical traffic, by sweeping demand from 0.6 to 1.5 times capacity with a per-step safety audit, and by measuring the effect of imperfect sensing and of calibrating the weights on held-out seeds.
+The proposed project addresses these gaps by comparing against re-implemented Webster, actuated, max-pressure and density-level strategies on identical traffic, by sweeping demand from 0.6 to 1.5 times capacity with a per-step safety audit, and by measuring the effect of imperfect sensing and of calibrating the weights on held-out seeds.
 """
 
 CH3 = r"""%% Chapter3_Methodology.tex
@@ -712,18 +696,18 @@ CH3 = r"""%% Chapter3_Methodology.tex
 \label{chap:meth}
 
 \section{Research Approach}
-The work is simulation-based and experimental. A software-only approach was chosen because experiments on a real junction are costly, unsafe and not repeatable, whereas a simulator lets every controller see exactly the same arrivals. A seed fixes the random arrival sequence, so runs of different controllers form matched pairs; results are reported as means with 95\% confidence intervals and compared with paired $t$-tests. The system is built incrementally, milestone by milestone, and each milestone is fully working before the next begins. Control uses exact simulated vehicle states; the vision pipeline is evaluated alongside against exact ground truth, and a separate sensing experiment measures what imperfect sensing would cost.
+The work is simulation-based and experimental. Experiments on a real junction are costly, unsafe and not repeatable, whereas a simulator lets every controller see exactly the same arrivals: a seed fixes the random arrival sequence, so runs of different controllers form matched pairs, reported as means with 95\% confidence intervals and compared with paired $t$-tests. Control uses exact simulated vehicle states; the vision pipeline is evaluated alongside against exact ground truth, and a separate experiment measures what imperfect sensing would cost.
 
 \section{Proposed System / Algorithm / Framework}
 
-\subsection{Overall Architecture and Workflow}
-The system consists of Python packages with one-directional dependencies: the simulation core imports no decision, analytics or web code, and every signal controller implements one interface (an update per time step and a phase name), so fixed-time, adaptive and comparison controllers can be exchanged without changes elsewhere. Figure~\ref{fig:architecture} shows the architecture and Figure~\ref{fig:workflow} the method workflow: in every step the controller senses vehicle positions, speeds and classes, scores each approach, and decides whether the current green may end; the preemption layer then protects every transition with full yellow and all-red intervals before the signal heads change.
+\subsection{Architecture and Workflow}
+The system consists of Python packages with one-directional dependencies: the simulation core imports no decision or web code, and every signal controller implements one interface (an update per time step and a phase name), so controllers are interchangeable. Figures~\ref{fig:architecture} and~\ref{fig:workflow} show the architecture and the method: in every step the controller senses vehicle positions, speeds and classes, scores each approach, and decides whether the green may end; the preemption layer then protects every transition with full yellow and all-red intervals.
 
 @FIG_ARCH@
 @FIG_WORKFLOW@
 
 \subsection{Junction and Traffic Model}
-The junction has four approaches, each with two lanes on a 330~m link; the stop line is at 200~m and the far edge of the junction box at 218~m. Vehicles travel straight through; turning movements, lane changes and pedestrians are not modelled. Vehicles arrive on each approach at a mean rate $\lambda$ with deterministic headways (one vehicle every $1/\lambda$~s); to create shifting imbalance, every 15~s the rate of each approach is redrawn as $\lambda\cdot U(0.4,1.6)$, with a floor of 0.02~veh/s. An arriving vehicle enters a lane at rest and is dropped if the rear of the previous vehicle is still within 8~m. For the above-capacity experiments two options are enabled instead: a blocked arrival waits in an entry queue and enters as soon as there is room, so that unserved demand and its waiting time are measured, and a vehicle enters at the highest speed from which it can still stop behind its leader. Table~\ref{tab:vehicles} lists the seven vehicle classes.
+The junction has four approaches, each with two lanes on a 330~m link; the stop line is at 200~m and the far edge of the junction box at 218~m. Vehicles travel straight through; turns, lane changes and pedestrians are not modelled. Vehicles arrive on each approach at a mean rate $\lambda$ with deterministic headways; every 15~s the rate of each approach is redrawn as $\lambda\cdot U(0.4,1.6)$, with a floor of 0.02~veh/s. A vehicle enters a lane at rest and is dropped if the rear of the previous vehicle is within 8~m. For the above-capacity experiments, blocked arrivals instead wait in an entry queue (so unserved demand is measured) and enter at the highest speed from which they can still stop behind their leader. Table~\ref{tab:vehicles} lists the seven vehicle classes.
 
 @TBL_veh@
 
@@ -732,7 +716,12 @@ Longitudinal motion follows a Gipps-type safe-speed rule~\cite{ref21}. A followe
 u_{safe} = \sqrt{2b\left(g + \frac{u_l^{2}}{2b_l} - s_0\right)}
 \label{eq:safe}
 \end{equation}
-where $g$ is the gap to the leader's rear, $u_l$ and $b_l$ are the leader's speed and maximum deceleration, $b$ is the follower's maximum deceleration and $s_0 = 2$~m is the standstill gap. A position constraint prevents any overlap within a step. On yellow or red, a vehicle upstream of the stop line brakes once its braking distance reaches the distance to the line; a vehicle too close to stop continues. Rule~\eqref{eq:safe} has no driver reaction time; Section~\ref{sec:kin} shows that this makes queues discharge too fast, adds a reaction time $\tau$, and repeats the main comparisons with it.
+where $g$ is the gap to the leader's rear, $u_l$ and $b_l$ are the leader's speed and maximum deceleration, $b$ is the follower's maximum deceleration and $s_0 = 2$~m is the standstill gap. Adding a driver reaction time $\tau$, as in Krau{\ss}'s model~\cite{ref25}, gives
+\begin{equation}
+u_{safe}(\tau) = -b\tau + \sqrt{(b\tau)^2 + b\,\frac{u_l^{2}}{b_l} + 2b\,(g - s_0)}
+\label{eq:safetau}
+\end{equation}
+which reduces to Eq.~\eqref{eq:safe} for $\tau = 0$. The main results use $\tau = 0$; Section~\ref{sec:kin} shows that this makes queues discharge too fast and repeats the comparisons with $\tau = 1.6$~s. On yellow or red, a vehicle upstream of the stop line brakes once its braking distance reaches the distance to the line.
 
 \subsection{Density Estimation}
 For approach $r$ with vehicle set $V_r$, the density score is
@@ -740,15 +729,15 @@ For approach $r$ with vehicle set $V_r$, the density score is
 D_r = \sum_{v\in V_r} w_{c(v)}\, m(v)
 \label{eq:density}
 \end{equation}
-where $w_{c(v)}$ is the class weight (Table~\ref{tab:vehicles}) and $m(v) = 1.5$ if vehicle $v$ is queued and $0.5$ otherwise. A vehicle is queued when it is upstream of the stop line and slower than 0.5~m/s. The weights reflect the road space and discharge time a vehicle class needs, and emergency vehicles receive a high weight so that their approach is favoured even without preemption. A queued vehicle counts three times as much as a moving one because it needs green now, whereas a moving vehicle may still be far upstream. The weights are heuristic; Section~\ref{sec:ablation} measures the contribution of each part of the score and Section~\ref{sec:calib} calibrates them. For display, an approach is labelled low ($D_r \le 3$), medium ($3 < D_r \le 6$) or high ($D_r > 6$).
+where $w_{c(v)}$ is the class weight (Table~\ref{tab:vehicles}) and $m(v) = 1.5$ if vehicle $v$ is queued (upstream of the stop line and slower than 0.5~m/s) and $0.5$ otherwise. The weights reflect the road space and discharge time of each class, and emergency vehicles receive a high weight; a queued vehicle counts three times as much as a moving one because it needs green now. The weights are heuristic; Sections~\ref{sec:ablation} and~\ref{sec:calib} test and calibrate them. For display, an approach is labelled low ($D_r \le 3$), medium ($3 < D_r \le 6$) or high ($D_r > 6$).
 
 \subsection{Adaptive Green Extension}
-The controller uses a two-phase plan: north--south green, yellow ($Y = 3$~s), all-red ($A = 1$~s), then east--west green, yellow and all-red. Only the green duration adapts. Let $t_g$ be the elapsed green time, and $D_A$ and $D_W$ the summed scores of the active and the waiting direction. At every step the green ends when
+The controller uses a two-phase plan: north--south green, yellow ($Y = 3$~s), all-red ($A = 1$~s), then east--west green, yellow and all-red. Only the green adapts. With $t_g$ the elapsed green and $D_A$, $D_W$ the summed scores of the active and waiting direction, the green ends when
 \begin{equation}
 t_g \ge G_{max} \quad\text{or}\quad \bigl(t_g \ge G_{min} \;\text{and}\; D_A \le \theta D_W\bigr)
 \label{eq:green}
 \end{equation}
-with $G_{min} = 8$~s, $G_{max} = 45$~s and $\theta = 1.1$. The green is thus extended while the served direction's score exceeds the waiting direction's by more than 10\%. Because yellow and all-red are fixed and green is capped, the red time of any approach in normal operation is bounded by
+with $G_{min} = 8$~s, $G_{max} = 45$~s and $\theta = 1.1$. Because yellow and all-red are fixed and green is capped, the red time of any approach in normal operation is bounded by
 \begin{equation}
 R_{max} = A + G_{max} + Y + A = 50\ \text{s}
 \label{eq:rmax}
@@ -757,38 +746,29 @@ so no approach can be starved. The fixed-time baseline uses the same sequence wi
 
 \subsection{Discharge Hold}
 \label{sec:hold}
-Rule~\eqref{eq:green} has a weakness that the above-capacity experiments expose (Section~\ref{sec:cap}). When both directions are saturated, the vehicles moving off on green score 0.5 each while the queue growing on red scores 1.5 each, so $D_A \le \theta D_W$ holds soon after $G_{min}$ and greens stay short; each phase change costs $Y + A = 4$~s in which no vehicle is served, so short greens lose capacity exactly when it is scarcest. The discharge hold adds the gap-out test of actuated control~\cite{ref23}: past the minimum, a green may only end once the served direction has gapped out, i.e.\ no served vehicle is within $z$ of its stop line,
+When both directions are saturated, vehicles moving off on green score 0.5 each while the queue growing on red scores 1.5 each, so $D_A \le \theta D_W$ holds soon after $G_{min}$ and greens stay short; each phase change costs $Y + A = 4$~s with no vehicle served, so capacity is lost exactly when it is scarcest (Section~\ref{sec:cap}). The discharge hold adds the gap-out test of actuated control~\cite{ref23}: past the minimum, a green may only end once no served vehicle is within $z$ of its stop line,
 \begin{equation}
 t_g \ge G_{max} \quad\text{or}\quad \bigl(t_g \ge G_{min} \;\text{and}\; n_z = 0 \;\text{and}\; D_A \le \theta D_W\bigr)
 \label{eq:hold}
 \end{equation}
-where $n_z$ is the number of served vehicles within $z = 10$~m upstream of the stop line. A saturated queue moving off always keeps a vehicle at the line and so keeps its green up to $G_{max}$, while free-flowing arrivals cross 10~m in under a second, so a cleared queue still hands over early. The zone length was chosen from 10, 15, 20 and 30~m on a separate tuning seed that is not used in any reported result. Yellow, all-red and the green limits are unchanged, so bound~\eqref{eq:rmax} still holds.
+where $n_z$ counts served vehicles within $z = 10$~m of the stop line (chosen from 10--30~m on a separate tuning seed). A saturated queue keeps a vehicle at the line and holds its green up to $G_{max}$, while a cleared queue still hands over early; bound~\eqref{eq:rmax} still holds.
 
 \subsection{Comparison Controllers}
-To compare against existing approaches (Chapter~\ref{chap:lit}), four strategies were re-implemented in the same simulator. They are not the original systems: like the proposed controller they read exact vehicle states, and all share its phase sequence, its 3~s yellow and 1~s all-red, and its 8--45~s green limits, so every one obeys bound~\eqref{eq:rmax} and the comparison isolates the switching decision.
+Four strategies were re-implemented in the same simulator with the same phases, change intervals and 8--45~s green limits, so every one obeys bound~\eqref{eq:rmax} and only the switching decision differs. Like the proposed controller they read exact vehicle states; they are not the original systems.
 \begin{itemize}
-  \item \textbf{Webster fixed:} a fixed plan whose green follows Webster's formula~\cite{ref2} for the mean demand of each run: $C_0 = (1.5L + 5)/(1 - Y_f)$, with lost time $L = 8$~s, $Y_f$ the sum of the critical flow ratios $q/s$, the saturation flow $s = 6000$~veh/h per approach measured in the simulator, and each phase receiving $(C_0 - L)/2$, clamped to 8--45~s. It knows the true mean demand of the run, which favours it.
-  \item \textbf{Actuated:} past the minimum, the green ends as soon as the served direction gaps out (no vehicle within 10~m of its stop line) and a vehicle waits on the other direction~\cite{ref23}; no density score is used.
-  \item \textbf{Max-pressure:} the pressure of a phase is the number of vehicles upstream of its stop lines minus those downstream, which is zero with free exits~\cite{ref11}; past the minimum the controller switches as soon as the waiting phase's pressure exceeds the served one's. This also represents busiest-lane-first control~\cite{ref6}.
-  \item \textbf{Density levels:} following~\cite{ref1}, when a green starts the served direction's density is classed low, medium or high and the green is set to 10, 20 or 30~s, without revision during the green.
+  \item \textbf{Webster fixed:} green from Webster's formula~\cite{ref2}, $C_0 = (1.5L + 5)/(1 - Y_f)$ with lost time $L = 8$~s, $Y_f$ the sum of the critical flow ratios, saturation flow $s = 6000$~veh/h per approach (measured in the simulator) and each phase receiving $(C_0 - L)/2$, clamped to 8--45~s. It is given the true mean demand of each run, which favours it.
+  \item \textbf{Actuated:} past the minimum, the green ends when the served direction gaps out (no vehicle within 10~m of its stop line) and a vehicle waits on the other direction~\cite{ref23}.
+  \item \textbf{Max-pressure:} switch once the waiting phase's upstream vehicle count exceeds the served one's~\cite{ref11}; this also represents busiest-lane-first control~\cite{ref6}.
+  \item \textbf{Density levels:} following~\cite{ref1}, the green is set at its start to 10, 20 or 30~s for low, medium or high density.
 \end{itemize}
 
 \subsection{Emergency Vehicle Preemption}
-Preemption is a wrapper around any phase-based controller (Figure~\ref{fig:preemption}). Without an emergency vehicle it passes control to the inner controller. When an ambulance or fire truck is upstream of the junction exit, it acts as follows.
-\begin{itemize}
-  \item \textbf{Entry:} a conflicting green first shows a full 3~s yellow, and a yellow already showing keeps its remaining time; all approaches are then red for 1~s, or for the remainder of an all-red already under way. If the emergency vehicle's approach is already green, that green is held.
-  \item \textbf{Priority green:} the emergency vehicle's direction (both opposing approaches) is green until no emergency vehicle remains before the junction exit, or for at most 20~s.
-  \item \textbf{Release:} the priority green ends with a full yellow and all-red, after which the inner controller restarts at the green of the direction that was held.
-  \item \textbf{Minimum green:} a green shown for less than 5~s is never cut, and an approach that already has green is served first.
-\end{itemize}
-When no other preemption is active, an emergency vehicle waits at most $5 + 3 + 1 = 9$~s for its priority green. Emergency vehicles are detected from the simulator state, i.e.\ perfect detection is assumed; in practice the input could come from vehicle-to-infrastructure messages or visual sensing.
+Preemption wraps any phase-based controller (Figure~\ref{fig:preemption}). When an ambulance or fire truck is upstream of the junction exit: a conflicting green first shows a full 3~s yellow and then 1~s all-red (a green shown for less than 5~s is never cut); the emergency vehicle's direction then has green until no emergency vehicle remains before the exit, or for at most 20~s; and the release again passes through full yellow and all-red before the inner controller restarts. An emergency vehicle thus waits at most $5 + 3 + 1 = 9$~s. Detection is assumed perfect, e.g.\ from vehicle-to-infrastructure messages.
 
 @FIG_PREEMPT@
 
 \subsection{Vision Pipeline}
-For each approach a virtual camera renders a $200\times240$ pixel frame of the 60~m before the stop line (4~px/m). Vehicles appear as shaded rectangles with a windshield band on a noisy road texture with lane markings. The detector converts the frame to grayscale, equalizes its histogram, upscales it three times, and applies OpenCV's cascade classifier with a pre-trained vehicle cascade~\cite{ref16} (scale factor 1.05, minimum neighbours 2, minimum size 20~px); the final-stage weight, clipped to $[0,1]$, serves as a relative confidence. A single cascade localizes vehicles but does not classify them, so on its own it cannot supply the class weights of Eq.~\eqref{eq:density}.
-
-The tracker keeps a constant-velocity Kalman filter~\cite{ref18} on each box centre and matches predicted boxes to detections with the Hungarian algorithm~\cite{ref19} on an IoU cost (minimum IoU 0.15). As in ByteTrack~\cite{ref17}, detections with confidence $\ge 0.15$ are matched first and the remaining low-confidence detections are then matched to still-unmatched tracks; only confident detections start tracks. A track is confirmed after two matches and deleted after three frames without one.
+A virtual camera per approach renders a $200\times240$ pixel frame of the 60~m before the stop line (4~px/m, 2~Hz). The detector equalizes the histogram, upscales three times and applies OpenCV's pre-trained vehicle Haar cascade~\cite{ref16} (scale factor 1.05, minimum neighbours 2, minimum size 20~px); it localizes vehicles but does not classify them. The tracker keeps a constant-velocity Kalman filter~\cite{ref18} per box centre and matches predicted boxes to detections with the Hungarian algorithm~\cite{ref19} on an IoU cost (minimum 0.15); as in ByteTrack~\cite{ref17}, detections with confidence $\ge 0.15$ are matched first and the rest are then matched to unmatched tracks. A track is confirmed after two matches and deleted after three frames without one.
 
 \section{Tools, Technologies, and Platforms}
 
@@ -801,36 +781,30 @@ The tracker keeps a constant-velocity Kalman filter~\cite{ref18} on each box cen
 \toprule
 \textbf{Category} & \textbf{Tool / Technology} & \textbf{Purpose} \\
 \midrule
-Programming Language & Python 3.12; JavaScript (ES modules) & Simulation, decision engine, backend; dashboard \\
-Numerical / Vision   & NumPy 2.1, SciPy 1.14, OpenCV 4.10 (headless) & Statistics and Hungarian assignment; Haar cascade and image processing \\
-Backend Framework    & FastAPI 0.115, Uvicorn, Pydantic 2.9, WebSockets 13 & REST API and live streaming \\
-Frontend Framework   & React 18, Vite 5, Tailwind CSS 3, Recharts 2 & Live dashboard and analytics charts \\
-Database             & SQLite via SQLAlchemy 2.0 and aiosqlite (PostgreSQL-ready) & Snapshots, events, report export \\
-Testing / CI         & pytest 8, httpx; GitHub Actions & 119 automated tests; build and Docker smoke test \\
-Packaging            & Docker and Docker Compose & Two-container deployment \\
-Hardware (optional)  & Raspberry Pi (GPIO) / ESP32 & Mirror the controller's signal on LEDs or relays \\
-Version Control      & Git + GitHub & Collaboration and backup \\
-IDE                  & VS Code & Development \\
+Language             & Python 3.12; JavaScript & Simulation, decision engine, backend; dashboard \\
+Numerical / Vision   & NumPy 2.1, SciPy 1.14, OpenCV 4.10 & Statistics, Hungarian assignment; Haar cascade \\
+Backend              & FastAPI 0.115, Pydantic 2.9, WebSockets & REST API and live streaming \\
+Frontend             & React 18, Vite 5, Tailwind 3, Recharts 2 & Live dashboard and analytics charts \\
+Database             & SQLite via SQLAlchemy 2.0 (PostgreSQL-ready) & Snapshots, events, report export \\
+Testing / Packaging  & pytest 8, GitHub Actions, Docker Compose & 119 automated tests; CI; deployment \\
+Hardware (optional)  & Raspberry Pi (GPIO) / ESP32 & Mirror the signal on LEDs or relays \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \section{Data Collection and Analysis}
-No real images or field data are used. Traffic is generated by the simulator with seeded random arrivals, and the camera frames and their ground-truth boxes are both rendered from the same simulator state, so annotation is automatic, exact and involves no manual labelling. Nothing is trained: the cascade is pre-trained, the controller is rule-based, and the detector and tracker parameters were fixed during development in unseeded runs, so there is no training split. Three kinds of seeds are kept apart: seed 1000 for tuning (the hold zone), seeds 101--105 for capacity measurement, and seeds 1--10 for all reported results (seeds 1--4 for the vision evaluation). In total @runs@ simulation runs (@hours@ simulated hours) were made.
-
-Three demand levels below capacity were simulated: $\lambda = 0.08$, $0.12$ and $0.18$~veh/s per approach (1152, 1728 and 2592~veh/h offered to the junction). For each level and controller, ten seeds were run for 1800~s with a 50~ms step. The first 60~s are a warm-up, and delay statistics use the vehicles entering between 60~s and 1650~s, all of which left the network before the end of their run. For the above-capacity experiments the capacity of each controller was first measured by flooding every approach (1.5 arrivals/s; five seeds); demand was then set to 0.6, 0.8, 0.9, 1.0, 1.2 and 1.5 times the measured fixed-time capacity, with ten paired seeds per level. Preemption is enabled for all controllers unless stated.
+No real images or field data are used. Traffic is generated by the simulator with seeded arrivals, and camera frames and their ground-truth boxes are both rendered from the same simulator state, so annotation is automatic and exact. Nothing is trained: the cascade is pre-trained, the controller is rule-based, and detector and tracker parameters were fixed during development in unseeded runs, so there is no training split. Seed 1000 was used for tuning (the hold zone), seeds 101--105 for capacity, and seeds 1--10 for all reported results (1--4 for vision); in total @runs@ runs (@hours@ simulated hours). Three demand levels below capacity were simulated ($\lambda = 0.08$, $0.12$, $0.18$~veh/s per approach, i.e.\ 1152, 1728 and 2592~veh/h), each for ten seeds of 1800~s with a 50~ms step and a 60~s warm-up; delay statistics use vehicles entering between 60~s and 1650~s. For the above-capacity experiments, capacity was first measured by flooding every approach (1.5 arrivals/s; five seeds), and demand was then set to 0.6, 0.8, 0.9, 1.0, 1.2 and 1.5 times the measured fixed-time capacity.
 
 \section{Evaluation Metrics}
 The following metrics are used to evaluate the proposed system:
 \begin{itemize}
-  \item \textbf{Stopped delay:} the time a vehicle spends upstream of the stop line below 0.5~m/s. Because vehicles enter at rest it includes a start-up component of 0.15--0.55~s that is the same for all controllers.
-  \item \textbf{Delay including waiting vehicles:} delay accrued by every vehicle, counting those still waiting to enter or at the stop line at the end of a run with the delay so far, so above capacity it is a lower bound.
+  \item \textbf{Stopped delay:} time a vehicle spends upstream of the stop line below 0.5~m/s (including a start-up component of 0.15--0.55~s that is the same for all controllers); and \textbf{delay including waiting vehicles}, a lower bound above capacity.
   \item \textbf{Throughput and capacity:} vehicles served per hour after the warm-up; capacity is the throughput with every approach flooded.
-  \item \textbf{Queue growth and spillback:} growth rate of the number of waiting vehicles (veh/min), and the share of approach-time (or approach-minutes) in which the queue reaches the start of the link; time for the queue to return to its pre-peak level after the peak.
-  \item \textbf{Signal safety:} number of conflicting greens, green-to-red transitions without yellow, yellows shorter than 3~s and all-red intervals shorter than 1~s before a conflicting green, checked at every step of every run.
-  \item \textbf{Detection and tracking:} precision and recall (a detection is correct when its centre lies inside a ground-truth box enlarged by 4~px), tracking coverage, ID switches per 100 vehicles, and tracked-speed mean absolute error.
-  \item \textbf{Kinematic validity:} saturation headway and flow per lane, and start-up lost time, against the Highway Capacity Manual.
-  \item \textbf{Statistical comparison:} 95\% confidence intervals and paired $t$-tests over the seeds (Mann--Whitney $U$ test for emergency-vehicle delay).
+  \item \textbf{Queue growth and spillback:} growth rate of waiting vehicles (veh/min), the share of time the queue reaches the start of the link, and the time to return to the pre-peak queue.
+  \item \textbf{Signal safety:} conflicting greens, missing yellows, and yellows or all-reds shorter than 3~s or 1~s, checked at every step of every run.
+  \item \textbf{Detection and tracking:} precision and recall (correct if the centre lies inside a ground-truth box enlarged by 4~px), tracking coverage and tracked-speed error.
+  \item \textbf{Kinematic validity:} saturation headway, flow and start-up lost time against the Highway Capacity Manual.
+  \item \textbf{Statistics:} 95\% confidence intervals and paired $t$-tests over seeds.
 \end{itemize}
 """
 
@@ -839,51 +813,50 @@ CH4 = r"""%% Chapter4_Implementation.tex
 \label{chap:impl}
 
 \section{System Architecture Overview}
-The implementation is a layered, simulation-first system (about six thousand lines of Python plus a React front end), built milestone by milestone. A headless simulation engine advances the junction in 50~ms steps (20~Hz). In each step the active controller first sets the light of every approach, and then all vehicles move. The decision engine scores each approach from the current vehicle states and decides when a green ends; the emergency-preemption wrapper overrides it when an emergency vehicle approaches. A vision pipeline renders a virtual camera frame per approach at 2~Hz and passes it to the detector and tracker; its results are shown on the dashboard and compared with ground truth, but control decisions use the simulator's vehicle states, which corresponds to ideal detection. A FastAPI backend runs the simulation, streams the junction state over WebSockets at 10~Hz, and stores snapshots and signal events; a React dashboard draws the junction to scale; and an optional driver mirrors the signal on real lights (Figure~\ref{fig:architecture}).
+The implementation is a layered, simulation-first system (about @sloc@ lines of Python, excluding tests and experiment scripts, plus a React front end), built milestone by milestone. A headless engine advances the junction in 50~ms steps (20~Hz): in each step the active controller sets the light of every approach and then all vehicles move. The decision engine scores each approach and decides when a green ends; the preemption wrapper overrides it when an emergency vehicle approaches. A vision pipeline renders a virtual camera frame per approach at 2~Hz for the detector and tracker; its output is shown on the dashboard and compared with ground truth, but control uses the simulator's vehicle states (ideal detection). A FastAPI backend runs the simulation, streams the state over WebSockets at 10~Hz and stores snapshots; a React dashboard draws the junction; and an optional driver mirrors the signal on real lights (Figure~\ref{fig:architecture}).
 
 \section{Module-wise Description}
 
 \subsection{Module 1: Simulation Engine}
-\textbf{Package:} \texttt{simulation/}. It contains the vehicle, lane, road, traffic-light and intersection entities, the engine loop, and the controller interface. Vehicles of seven classes (Table~\ref{tab:vehicles}) follow the Gipps-type safe-speed rule~\eqref{eq:safe} with an optional driver reaction time. The \texttt{SignalControllerBase} strategy interface (an \texttt{update} per time step and a phase name) is the one seam that lets the fixed-timer, adaptive, comparison and preemption controllers plug in without any change to the engine, the backend or the front end. Optional behaviours used by the experiments, all off by default, are the entry queue, entry at the highest safe speed, the reaction time, a time-varying demand profile and a sensor model. A \texttt{SignalAudit} checks every step for conflicting greens and shortened change intervals.
+\textbf{Package:} \texttt{simulation/}. It holds the vehicle, lane, road, traffic-light and intersection entities, the engine loop and the controller interface. Vehicles of seven classes (Table~\ref{tab:vehicles}) follow the safe-speed rule~\eqref{eq:safe}, with an optional reaction time~\eqref{eq:safetau}. The \texttt{SignalControllerBase} strategy interface is the one seam that lets the fixed-timer, adaptive, comparison and preemption controllers plug in without changing the engine, backend or front end. Optional behaviours used by the experiments, all off by default, are the entry queue, entry at the highest safe speed, the reaction time, a time-varying demand profile and a sensor model. A \texttt{SignalAudit} checks every step for conflicting greens and shortened change intervals.
 
 \subsection{Module 2: Decision Engine}
-\textbf{Package:} \texttt{decision\_engine/}. \texttt{density.py} implements the class-weighted, queue-aware score of Eq.~\eqref{eq:density}. \texttt{adaptive\_controller.py} implements the bounded green extension of Eq.~\eqref{eq:green} and, with \texttt{hold\_while\_discharging}, the discharge hold of Eq.~\eqref{eq:hold}. \texttt{baselines.py} and \texttt{webster.py} hold the four comparison controllers, which reuse the adaptive controller's phase sequence and change intervals and replace only the single decision of whether a green may end. \texttt{emergency\_preemption.py} wraps any phase-based controller with the entry, priority-green and release states of Figure~\ref{fig:preemption}. \texttt{sensing.py} wraps a controller so that it sees the junction through a sensor model (a camera's field of view, a refresh rate, missed detections, no vehicle classes and phantom detections) while emergency preemption still reads the true flags.
+\textbf{Package:} \texttt{decision\_engine/}. \texttt{density.py} implements the score of Eq.~\eqref{eq:density}; \texttt{adaptive\_controller.py} the green extension of Eq.~\eqref{eq:green} and, with \texttt{hold\_while\_discharging}, the discharge hold of Eq.~\eqref{eq:hold}; \texttt{baselines.py} and \texttt{webster.py} the four comparison controllers, which reuse the phase sequence and change intervals and replace only the decision of whether a green may end; \texttt{emergency\_preemption.py} the preemption wrapper of Figure~\ref{fig:preemption}; and \texttt{sensing.py} a wrapper that lets a controller see the junction through a sensor model (limited view, refresh rate, missed detections, no classes, phantom detections).
 
 \subsection{Module 3: Vision Pipeline}
-\textbf{Package:} \texttt{vision/}. \texttt{camera.py} renders a virtual camera frame of the 60~m before each stop line; \texttt{detector.py} is the Haar-cascade vehicle detector; \texttt{tracker.py} is the ByteTrack-style tracker with a constant-velocity Kalman filter and Hungarian assignment; and \texttt{pipeline.py} ties them together and compares detections and tracks with ground truth. Detection takes about 137~ms per frame on an Intel Core i5-12450H laptop CPU in a single process, whereas a control decision takes about 0.01~ms.
+\textbf{Package:} \texttt{vision/}. \texttt{camera.py} renders the virtual camera frames, \texttt{detector.py} is the Haar-cascade detector, \texttt{tracker.py} the ByteTrack-style tracker, and \texttt{pipeline.py} compares detections and tracks with ground truth. @timing_text@
 
 \subsection{Module 4: Backend and Analytics}
-\textbf{Packages:} \texttt{backend/app/}, \texttt{analytics/}. A FastAPI application runs the simulation, vision and analytics tasks, and exposes REST endpoints and WebSocket channels (Table~\ref{tab:api}). The analytics collector samples queue, delay, throughput and congestion level at 1~Hz, raises a high-traffic alert when an approach stays at high density for 3~s, and exports reports as CSV or JSON. A comparison runner executes a second simulation with the same random seed under another controller, so the dashboard can show fixed and adaptive control side by side.
+\textbf{Packages:} \texttt{backend/app/}, \texttt{analytics/}. A FastAPI application runs the simulation, vision and analytics tasks and exposes REST endpoints and WebSocket channels (Table~\ref{tab:api}). The analytics collector samples queue, delay, throughput and congestion level at 1~Hz, raises a high-traffic alert when an approach stays at high density for 3~s, and exports reports as CSV or JSON. A comparison runner executes a second simulation with the same seed under another controller, so the dashboard can show fixed and adaptive control side by side.
 
 \begin{table}[H]
 \centering
 \caption{Backend interfaces}
 \label{tab:api}
 \small
-\begin{tabular}{@{}p{5.2cm}p{9.5cm}@{}}
+\begin{tabular}{@{}p{5.6cm}p{9.1cm}@{}}
 \toprule
 \textbf{Endpoint} & \textbf{Purpose} \\
 \midrule
-GET /api/health & Liveness check used by the Docker health check \\
-GET /api/intersection/state & Current junction state (vehicles, lights, phase) \\
-GET /api/vision/latest & Latest detections and tracks per approach \\
+GET /api/health & Liveness check (Docker health check) \\
+GET /api/intersection/state & Current junction state \\
+GET /api/vision/latest & Latest detections and tracks \\
 GET /api/analytics/history/\{road\} & Time series for one approach \\
-GET /api/analytics/summary & Aggregate queue, delay, throughput and congestion \\
+GET /api/analytics/summary & Aggregate queue, delay, throughput, congestion \\
 GET /api/reports/export & Report export as CSV or JSON \\
-GET /api/comparison/latest & Fixed-versus-adaptive comparison metrics \\
-GET /api/explain & Plain-language explanation of each displayed quantity \\
+GET /api/comparison/latest & Fixed-versus-adaptive comparison \\
+GET /api/explain & Explanation of each displayed quantity \\
 GET /api/signals/status & Signal state polled by the hardware driver \\
-WS /ws/simulation, /ws/simulation/shadow & Live junction state; second simulation for comparison \\
-WS /ws/vision, /ws/analytics, /ws/comparison & Live detections, analytics and comparison data \\
+WS /ws/simulation, /ws/simulation/shadow, /ws/vision, /ws/analytics, /ws/comparison & Live junction state, second simulation, detections, analytics and comparison \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Module 5: Dashboard and Hardware Bridge}
-\textbf{Directories:} \texttt{frontend/}, \texttt{hardware/}. The React dashboard (Section~\ref{sec:ui}) consumes the WebSocket channels. The hardware bridge is a pair of drivers, a Python driver for a Raspberry Pi and an Arduino/C++ sketch for an ESP32, that poll \texttt{GET /api/signals/status} at 5~Hz and drive 12 LEDs (red, yellow and green for each of four approaches, each through a 220~$\Omega$ resistor); for larger lamps an opto-isolated relay module is to be used. Nothing in the simulation, decision engine or backend changes, since the driver is a client. The bridge has not yet been built and tested on a physical board.
+\textbf{Directories:} \texttt{frontend/}, \texttt{hardware/}. The React dashboard (Section~\ref{sec:ui}) consumes the WebSocket channels. The hardware bridge is a Python driver for a Raspberry Pi and an Arduino/C++ sketch for an ESP32 that poll \texttt{GET /api/signals/status} at 5~Hz and drive 12 LEDs (red, yellow and green for four approaches, each through a 220~$\Omega$ resistor); larger lamps need an opto-isolated relay. Since the driver is only a client, nothing in the simulation, decision engine or backend changes. The bridge has not yet been built and tested on a physical board.
 
 \section{Database / Data Model}
-Persistence uses SQLAlchemy 2.0 with SQLite by default (PostgreSQL-ready). A snapshot split into two tables avoids repeating each of the four roads' columns in one wide table and matches the per-road query shape of the analytics collector. Table~\ref{tab:schema} lists the four tables.
+Persistence uses SQLAlchemy 2.0 with SQLite by default (PostgreSQL-ready). Splitting a snapshot into two tables avoids repeating each road's columns in one wide table and matches the analytics collector's per-road queries (Table~\ref{tab:schema}). A snapshot is stored every 10th one-hertz sample, i.e.\ every 10~s, and signal events are recorded as they occur; in Docker the SQLite file lives in a named volume, so history survives a restart.
 
 \begin{table}[H]
 \centering
@@ -902,10 +875,8 @@ signal\_events & id, run\_id (FK), sim\_time, road\_name, event\_type, phase\_na
 \end{tabular}
 \end{table}
 
-A snapshot is stored every 10~s of simulated time, and signal events (phase changes and preemption states) are recorded as they occur. In the Docker deployment the SQLite file lives in a named volume, so history survives a restart.
-
 \section{Key Algorithms}
-The core algorithms are the density score, the green-end decision with discharge hold, and the preemption state machine. In pseudocode, the green-end decision evaluated at every step is:
+The core algorithms are the density score, the green-end decision with discharge hold, and the preemption state machine. The green-end decision evaluated at every step is, in pseudocode:
 
 \begin{lstlisting}[language=Python, caption={Green-end decision with discharge hold}]
 def green_may_end(t_g, D_A, D_W, near_stop_line):
@@ -918,17 +889,17 @@ def green_may_end(t_g, D_A, D_W, near_stop_line):
     return D_A <= THETA * D_W             # theta = 1.1
 \end{lstlisting}
 
-The preemption wrapper moves through the states \emph{inner controller}, \emph{entry yellow}, \emph{all-red clearing}, \emph{priority green}, \emph{release yellow} and \emph{release all-red}, so every path from one direction's green to the other's passes through a full yellow and all-red interval (Figure~\ref{fig:preemption}). The per-step safety audit checks this property in every run. Appendix~\ref{app:snapshots} lists the source of the main functions.
+The preemption wrapper moves through \emph{inner controller}, \emph{entry yellow}, \emph{all-red clearing}, \emph{priority green}, \emph{release yellow} and \emph{release all-red}, so every path from one direction's green to the other's passes through a full yellow and all-red (Figure~\ref{fig:preemption}); the per-step audit checks this in every run. Appendix~\ref{app:snapshots} lists the source of the main functions.
 
 \section{User Interface}
 \label{sec:ui}
-The React dashboard draws the junction to scale on an HTML5 canvas from the streamed JSON state (vehicle positions, speeds and light states). Its components are: the intersection canvas; signal-status and per-road statistics cards with the density score and congestion level; a camera-feed grid with detection and tracking overlays; a traffic-alert banner; an analytics dashboard with historical graphs and report export; a comparison view that runs fixed and adaptive control on the same seed and shows the savings; and a ``how it works'' page and explain panel that describe each displayed quantity.
+The React dashboard draws the junction to scale on an HTML5 canvas from the streamed state. Its components are the intersection canvas; signal-status and per-road statistics cards with density score and congestion level; a camera-feed grid with detection and tracking overlays; a traffic-alert banner; an analytics dashboard with historical graphs and report export; a comparison view that runs fixed and adaptive control on the same seed; and a ``how it works'' page and explain panel.
 
 \section{Development and Deployment}
 \begin{itemize}
-  \item \textbf{Operating System:} Windows 11 for development; Ubuntu in the continuous-integration runners and Docker containers.
-  \item \textbf{Key Libraries:} Python 3.12; FastAPI 0.115.0, Uvicorn 0.30.6, Pydantic 2.9.2, SQLAlchemy 2.0.35, aiosqlite 0.20.0, NumPy 2.1.2, SciPy 1.14.1, OpenCV (headless) 4.10.0.84, pytest 8.3.3; React 18.3, Vite 5.4, Tailwind CSS 3.4, Recharts 2.12.
-  \item \textbf{Deployment:} \texttt{docker compose up --build} starts two containers, the backend (port 8000, with a health check) and the dashboard behind nginx (port 8080); the SQLite file persists in a named volume. A GitHub Actions workflow runs the 119-test backend suite, the front-end build and a Docker build with smoke test on every push. The optional hardware drivers run on a Raspberry Pi or ESP32.
+  \item \textbf{Operating System:} Windows 11 for development; Ubuntu in CI runners and Docker containers.
+  \item \textbf{Key Libraries:} Python 3.12; FastAPI 0.115.0, SQLAlchemy 2.0.35, NumPy 2.1.2, SciPy 1.14.1, OpenCV (headless) 4.10.0.84, pytest 8.3.3; React 18.3, Vite 5.4, Tailwind CSS 3.4, Recharts 2.12.
+  \item \textbf{Deployment:} \texttt{docker compose up --build} starts the backend (port 8000, with a health check) and the dashboard behind nginx (port 8080). A GitHub Actions workflow runs the 119-test suite, the front-end build and a Docker build with smoke test on every push.
 \end{itemize}
 """
 
@@ -937,99 +908,84 @@ CH5 = r"""%% Chapter5_ResultsDiscussion.tex
 \label{chap:results}
 
 \section{Experimental Setup}
-All experiments ran on the simulator described in Chapter~\ref{chap:meth} on an Intel Core i5-12450H laptop, using the scripts in the \texttt{scripts/} folder of the repository; every table can be regenerated from them. Each controller and demand level was run for ten paired seeds of 1800~s; capacity used five seeds; seed 1000 was used for tuning, 101--105 for capacity and 1--10 for the reported results. In total @runs@ runs (@hours@ simulated hours) were made. Delay is the stopped delay defined in Chapter~\ref{chap:meth}, with 95\% confidence intervals and paired $t$-tests.
+All experiments ran on the simulator of Chapter~\ref{chap:meth} on an Intel Core i5-12450H laptop, using the scripts in the \texttt{scripts/} folder, from which every table can be regenerated (setup and seeds as in Section~\ref{chap:meth}; @runs@ runs, @hours@ simulated hours). Delay is the stopped delay, with 95\% confidence intervals and paired $t$-tests over ten seeds.
 
 \section{Results}
 
 \subsection{Signal Safety Audit}
-Every step of every run was checked for conflicting greens, green-to-red transitions without yellow, yellows shorter than 3~s and all-red intervals shorter than 1~s before a conflicting green. Across all @runs@ runs, covering all seven controllers and @preempt@ preemption events in the main runs alone, \textbf{none of these violations occurred}. An earlier version of the preemption layer returned control to the inner controller without a release interval; this audit exposed the resulting skipped yellows, which led to the release states of Figure~\ref{fig:preemption}.
+Every step of every run was checked for conflicting greens, missing yellows, and yellow or all-red shorter than 3~s or 1~s. Across all @runs@ runs, covering all seven controllers and @preempt@ preemption events in the main runs alone, \textbf{none of these violations occurred}. The audit also exposed a flaw in an earlier preemption version that resumed without a release interval, which led to the release states of Figure~\ref{fig:preemption}.
 
 \subsection{Experiment 1: Comparison Below Capacity}
-Table~\ref{tab:below} compares all controllers at the three demand levels. The proposed adaptive controller reduced mean stopped delay by @redu_ad@ relative to the 20~s fixed plan, with lower delay in all ten seeds at every level ($p<0.001$), and the 95th-percentile delay fell by @p95@. However, the Webster plan, actuated control and max-pressure control achieved the same or slightly lower delay (@redu_web@, @redu_act@ and @redu_mp@ below the fixed plan); relative to the adaptive controller their delay differed by @others_vs_ad@. Below capacity, therefore, most of the gain comes from replacing an untuned 20~s plan with shorter, demand-responsive greens (mean adaptive green @green_ad_med@~s at medium demand), which any of these strategies provides. Three-level density control was worse than the fixed plan at medium and high demand (@dl_med@ and @dl_high@), because its greens of 20--30~s for medium and high density outlast the queue. The discharge hold left delay essentially unchanged at these levels (@hold_vs_ad@ relative to the adaptive controller). Throughput changed by at most @thru_max@ because all three levels are far below capacity.
+In Table~\ref{tab:below} the adaptive controller reduced mean stopped delay by @redu_ad@ relative to the 20~s fixed plan, in all ten seeds at every level ($p<0.001$), and the 95th-percentile delay fell by @p95@. However, the Webster plan, actuated control and max-pressure control achieved the same or slightly lower delay (@redu_web@, @redu_act@ and @redu_mp@ below the fixed plan; @others_vs_ad@ relative to adaptive). Below capacity, therefore, most of the gain comes from replacing an untuned 20~s plan with short, demand-responsive greens (mean adaptive green @green_ad_med@~s at medium demand). Three-level density control was worse than the fixed plan at medium and high demand (@dl_med@ and @dl_high@), as its 20--30~s greens outlast the queue. The discharge hold changed delay by @hold_vs_ad@ relative to the adaptive controller, and throughput changed by at most @thru_max@, since all levels are far below capacity.
 
 @TBL_t2@
 
 \subsection{Experiment 2: Capacity and Operation Above Capacity}
 \label{sec:cap}
-The three demand levels of Table~\ref{tab:below} are only @lo_pct@--@hi_pct@\% of the junction's measured fixed-time capacity (@fixed_cap@~veh/h), so they cannot show congestion. Table~\ref{tab:capacity} gives the capacity of each controller; these runs and the steady sweep use preemption off, because emergency vehicles make up 1\% of arrivals and at these demands trigger a preemption every 15--30~s, which would otherwise dominate the timing of every controller.
+The three levels of Table~\ref{tab:below} are only @lo_pct@--@hi_pct@\% of the junction's measured fixed-time capacity (@fixed_cap@~veh/h), so they cannot show congestion. Table~\ref{tab:capacity} gives each controller's capacity; these runs and the steady sweep use preemption off, because emergency vehicles (1\% of arrivals) would otherwise trigger a preemption every 15--30~s and dominate every controller's timing.
 
 @TBL_cap@
 
-The proposed controller lost @cap_loss@ of capacity relative to fixed timing ($p$ @cap_ad_p@): with both directions saturated its greens fell to the 8~s minimum (mean @green_ad@~s), as explained in Section~\ref{sec:hold}. With the discharge hold the mean saturated green rose to @green_hold@~s and capacity to @cap_hold@ relative to fixed timing. Max-pressure control suffered the same loss as the original rule (@cap_mp@), since moving vehicles also leave its pressure count as the queue discharges, whereas actuated control (@cap_act@) and the Webster plan (@cap_web@), which runs the maximum green above capacity, did not.
+The original adaptive rule lost @cap_loss@ of capacity relative to fixed timing ($p$ @cap_ad_p@): with both directions saturated its greens fell to the 8~s minimum (mean @green_ad@~s), as explained in Section~\ref{sec:hold}. With the discharge hold the mean saturated green rose to @green_hold@~s and capacity to @cap_hold@. Max-pressure suffered the same loss as the original rule (@cap_mp@), since moving vehicles also leave its pressure count, whereas actuated control (@cap_act@) and the Webster plan (@cap_web@), which runs the maximum green above capacity, did not.
 
-Demand was then swept from 0.6 to 1.5 times the fixed-time capacity, with blocked arrivals kept in an entry queue so that unserved demand is measured (Tables~\ref{tab:sweep}--\ref{tab:queue}, Figure~\ref{fig:above}). The original adaptive controller was better than fixed timing only at 0.6$\times$ capacity and worse from 0.8$\times$ on: at capacity its delay was @sw_cap_ad@~s against @sw_cap_fx@~s for the fixed plan, its queue grew by @qg_ad@ vehicles per minute, and queues reached the start of the link during @sb_ad@\% of approach-time. With the discharge hold, delay was below fixed timing at every level (@hold_delay_list@ from 0.6$\times$ to 1.5$\times$; the difference at 1.0$\times$ was not significant, $p$ = @hold_cap_p@) and throughput above capacity rose by @thr_hi@ and @thr_15@ at 1.2$\times$ and 1.5$\times$. Among the comparison strategies, actuated control behaved similarly to the hold controller (@sw_cap_act@~s at capacity, @sw_hi_act@~s at 1.2$\times$, against @sw_cap_hold@~s and @sw_hi_hold@~s), and max-pressure control degraded like the original rule. With preemption enabled the same pattern held with smaller margins (capacity @on_ad@ for the original rule and @on_hold@ with the hold), because preemption also cuts the hold's long greens.
+Demand was then swept from 0.6 to 1.5 times capacity with blocked arrivals kept in an entry queue (Table~\ref{tab:sweep}, Figure~\ref{fig:above}). The original rule beat fixed timing only at 0.6$\times$: at capacity its delay was @sw_cap_ad@~s against @sw_cap_fx@~s, its queue grew by @qg_ad@ vehicles per minute, and queues reached the link start during @sb_ad@\% of approach-time. With the hold, delay was below fixed timing at every level (@hold_delay_list@ from 0.6$\times$ to 1.5$\times$; not significant at 1.0$\times$, $p$ = @hold_cap_p@) and throughput rose by @thr_hi@ and @thr_15@ at 1.2$\times$ and 1.5$\times$. Actuated control behaved like the hold (@sw_cap_act@~s at capacity and @sw_hi_act@~s at 1.2$\times$, against @sw_cap_hold@~s and @sw_hi_hold@~s), and max-pressure degraded like the original rule. With preemption on, the same pattern held with smaller margins (capacity @on_ad@ and @on_hold@), because preemption also cuts the hold's long greens.
 
 @TBL_sweep@
-@TBL_thru@
-@TBL_queue@
 @FIG_ABOVE@
 
 \subsection{Experiment 3: Sixty-Minute Peak Period}
-Steady demand shows capacity but not how a controller manages a congestion episode. In a further 60-minute experiment, demand rose from 0.6 to 1.2 times the fixed-time capacity (ramping over 10--15~min), stayed there for 15~min and fell back to 0.6 by 35~min (Figure~\ref{fig:peak}; preemption off, ten paired seeds; the Webster plan timed for the average demand). The queue, including vehicles waiting to enter, peaked at @pk_fx@ vehicles under fixed timing, @pk_hold@ with the discharge hold, @pk_act@ with actuated control and @pk_ad@ with the original adaptive rule. After the peak, the queue returned to its pre-peak level in @rec_fx@ under fixed timing and @rec_hold@ with the hold, whereas the original rule @rec_ad@ and max-pressure control @rec_mp@. Approach entries were blocked for @sp_fx@ approach-minutes under fixed timing, @sp_hold@ with the hold and @sp_ad@ with the original rule. During the peak the hold served @pt_hold@~veh/h, against @pt_fx@ for fixed timing and @pt_ad@ for the original rule. Relative to fixed timing, total delay changed by @td_hold@ with the hold, @td_act@ with actuated control and @td_ad@ with the original rule. Managing a congestion episode therefore depends above all on not shortening greens while queues are saturated.
+In a 60-minute experiment, demand rose from 0.6 to 1.2 times capacity (ramping over 10--15~min), stayed there for 15~min and fell back to 0.6 by 35~min (Table~\ref{tab:peak}, Figure~\ref{fig:peak}; preemption off, ten paired seeds; the Webster plan timed for the average demand). The queue, including vehicles waiting to enter, peaked at @pk_fx@ vehicles under fixed timing, @pk_hold@ with the hold, @pk_act@ with actuated control and @pk_ad@ with the original rule. After the peak, the queue returned to its pre-peak level in @rec_fx@ under fixed timing and @rec_hold@ with the hold, whereas the original rule @rec_ad@ and max-pressure @rec_mp@. Entries were blocked for @sp_fx@, @sp_hold@ and @sp_ad@ approach-minutes (fixed, hold, original); the hold served @pt_hold@~veh/h during the peak against @pt_fx@ for fixed timing and @pt_ad@ for the original rule; and total delay changed by @td_hold@ with the hold, @td_act@ with actuated control and @td_ad@ with the original rule. Managing a congestion episode therefore depends above all on not shortening greens while queues are saturated.
 
 @TBL_peak@
 @FIG_PEAK@
 
 \subsection{Experiment 4: Emergency Preemption}
-Emergency vehicles made up 1\% of arrivals and triggered @pre_rate@ preemptions per hour under adaptive control (Table~\ref{tab:preemption}). Preemption reduced their mean stopped delay to the start-up component of the metric under every controller (at medium demand from @ev_fx_off@~s to @ev_fx_on@~s under fixed timing and from @ev_ad_off@~s to @ev_ad_on@~s under adaptive control). The cost to other traffic depends on the controller: at medium demand it was @oth_fx@ under fixed timing, but @oth_ad@ under adaptive control and @oth_hold@ with the hold, because each preemption discards the density-responsive timing and restarts the plan at a fixed phase. Emergency vehicles are far more frequent here than in normal traffic, so the aggregate cost at a real junction would be expected to be smaller.
-
-@TBL_pre@
+Emergency vehicles (1\% of arrivals) triggered @pre_rate@ preemptions per hour. At medium demand, preemption cut their mean stopped delay from @ev_fx_off@~s to @ev_fx_on@~s under fixed timing and from @ev_ad_off@~s to @ev_ad_on@~s under adaptive control ($p<0.001$), but other traffic paid @oth_fx@ under fixed timing, @oth_ad@ under adaptive control and @oth_hold@ with the hold, because each preemption discards the density-responsive timing. Emergency vehicles are far more frequent here than in normal traffic, so the real cost would be smaller.
 
 \subsection{Experiment 5: Ablation}
 \label{sec:ablation}
-Table~\ref{tab:ablation} changes one part of the controller at a time, on the same paired seeds. Counting vehicles without weights or multipliers raised delay by @abl_un_m@ and @abl_un_h@ at medium and high demand. Removing the parts separately shows where this comes from: without the queued/moving distinction delay rose by @abl_nq_m@ and @abl_nq_h@, whereas setting every class weight to 1 changed it by @abl_nc_m@ and @abl_nc_h@. The benefit of the score therefore comes from distinguishing queued from moving vehicles, not from the class weights, which did not help as set. Raising $\theta$ to 1.5 lowered delay slightly (@abl_th_m@ and @abl_th_h@) and $\theta = 1.0$ made no difference; the discharge hold, with any zone length, did not change delay below capacity, where its benefit is not needed.
+Table~\ref{tab:ablation} changes one part at a time on the same seeds. Counting vehicles without weights or multipliers raised delay by @abl_un_m@ and @abl_un_h@ at medium and high demand; removing only the queued/moving distinction raised it by @abl_nq_m@ and @abl_nq_h@, whereas setting every class weight to 1 changed it by @abl_nc_m@ and @abl_nc_h@. The benefit of the score thus comes from distinguishing queued from moving vehicles, not from the class weights. Raising $\theta$ to 1.5 lowered delay slightly (@abl_th_m@ and @abl_th_h@), and the hold, with any zone length, left delay unchanged below capacity.
 
 @TBL_abl@
 
-\subsection{Experiment 6: Vision Pipeline Accuracy and Failure Cases}
-The vision pipeline was evaluated on seeds 1--4 (@frames@ frames, @gt@ vehicle instances in view). On these synthetic frames the generic cascade performed poorly: precision was @prec@\% and recall @rec@\% (Table~\ref{tab:detector}). The failure cases are systematic. @persist@\% of the false positives recur at the same spot in at least 10\% of a camera's frames, i.e.\ the cascade fires on fixed background texture rather than on vehicles. Recall varies by class (@class_recall@) and by distance from the stop line (@dist_recall@); recall is lowest near the stop line, where queued vehicles stand close together. Without upscaling, or without histogram equalization, the cascade found essentially nothing. A 2$\times$ instead of 3$\times$ upscale raised precision to @prec2x@\% but cut recall to @rec2x@\%, so no setting of this generic cascade gives both.
+\subsection{Experiment 6: Vision Pipeline}
+On seeds 1--4 (@frames@ frames, @gt@ vehicle instances) the generic cascade reached @prec@\% precision and @rec@\% recall (Table~\ref{tab:detector}). @persist@\% of the false positives recur at the same spot, i.e.\ the cascade fires on background texture rather than on vehicles; recall varies by class (@class_recall@) and distance (@dist_recall@) and is lowest near the stop line. Without upscaling or without histogram equalization the cascade found essentially nothing, and a 2$\times$ upscale raised precision to @prec2x@\% but cut recall to @rec2x@\%. Only @cover@\% of vehicle instances carried a confirmed track, and tracked speed had a mean absolute error of @speed_mae@~m/s over @speed_n@ estimates against vehicles moving at only @speed_true@~m/s, since tracks are confirmed almost only on queued vehicles: a negative result, as the pipeline gives no usable kinematics for moving traffic. Dropping the low-confidence matching stage or the motion model changed little, because recall is the limit. This is why the evaluated controllers read vehicle states from the simulator; accuracy on real footage is unknown.
 
 @TBL_det@
 
-Tracking was evaluated on the default detector's output (Table~\ref{tab:tracking}). Only @cover@\% of the vehicle instances in view carried a confirmed track, and @confirmed@\% of the vehicles were confirmed at least once. For confirmed tracks on real vehicles, the mean absolute error of the tracked speed was @speed_mae@~m/s over @speed_n@ estimates. This is not a good result: the vehicles concerned were moving at only @speed_true@~m/s on average, because tracks are confirmed almost only on nearly stationary, queued vehicles, so the error is as large as the speed itself and the pipeline provides no usable kinematics for moving traffic. Dropping the low-confidence second matching stage or the motion model changed coverage little, because the limiting factor is the detector's recall, not the association. These results are why the evaluated controllers read vehicle states from the simulator: a class-aware detector trained on the target imagery is needed before detections can drive control, and accuracy on real footage is unknown.
-
-@TBL_trk@
-
 \subsection{Experiment 7: Validation of the Simulated Kinematics}
 \label{sec:kin}
-To check the simulator's kinematics against external values, queue discharge was measured as at a real junction: the time between successive queued vehicles crossing the stop line after the green starts, in saturated fixed-time runs (five seeds). The Highway Capacity Manual's base values are 1900 passenger cars per hour per lane (a 1.89~s headway) and a start-up lost time of about 2~s~\cite{ref24}. The model used for the main results discharges cars every @hw0@~s (@sf0@~veh/h/lane; Table~\ref{tab:kinematics}): without a reaction time a follower may trail by only the 2~m standstill gap at any speed. Adding a driver reaction time $\tau$ to the safe speed, as in Krau{\ss}'s model~\cite{ref25}, and setting $\tau = 1.6$~s gives @hw1@~s (@sf1@~veh/h/lane) for cars, within @sf1_err@\% of the reference. The calibrated model still has no extra delay when a queue starts to move, so its start-up lost time (@sul1@~s) is lower than in the field.
+Queue discharge was measured as at a real junction: headways of queued vehicles crossing the stop line in saturated fixed-time runs (five seeds), averaged from the fifth vehicle on. The Highway Capacity Manual base is 1900 veh/h/lane (a 1.89~s headway) with about 2~s start-up lost time~\cite{ref24}. The model of the main results discharges cars every @hw0@~s (@sf0@~veh/h/lane; Table~\ref{tab:kinematics}), because without a reaction time a follower may trail by only the 2~m standstill gap. With $\tau = 1.6$~s in Eq.~\eqref{eq:safetau} the headway is @hw1@~s (@sf1@~veh/h/lane), within @sf1_err@\% of the reference; start-up lost time (@sul1@~s) stays below field values.
 
 @TBL_kin@
 
-All comparisons were then repeated with the calibrated model ($\tau = 1.6$~s; the Webster plan recomputed with the calibrated saturation flow of 3600~veh/h per approach). Table~\ref{tab:calibrated} summarizes them. Below capacity, the reductions relative to the fixed plan were @redu_cal_ad@ for the adaptive controller and @redu_cal_web@, @redu_cal_act@ and @redu_cal_mp@ for the Webster plan, actuated and max-pressure control. The calibrated capacity of the fixed plan was @cal_fixed_cap@~veh/h; relative to it, the original adaptive rule reached @cal_ad@ and the Webster plan @cal_web@. The discharge hold, with the 10~m zone chosen for the default model, reached only @cal_hold10@ (mean saturated green @cal_hold10_green@~s): with a reaction time, vehicles leaving a queue spread out to gaps of about 20~m at speed, so a 10~m zone empties between them and the green gaps out while the queue is still discharging. The zone is therefore a kinematics-dependent parameter, as the passage time of a real actuated controller is set for local conditions. Re-tuned for the calibrated model on the tuning seed (@zone@~m), the discharge hold reached @zone_hold@ capacity relative to fixed timing and actuated control @zone_act@, against @zone_web@ for the Webster plan.
-
-@TBL_cal@
+All comparisons were repeated with $\tau = 1.6$~s (Webster re-timed for 3600~veh/h). Below capacity, delay fell by @redu_cal_ad@ for the adaptive controller and @redu_cal_web@, @redu_cal_act@ and @redu_cal_mp@ for Webster, actuated and max-pressure. Relative to the calibrated fixed-time capacity (@cal_fixed_cap@~veh/h), the original rule reached @cal_ad@ and Webster @cal_web@, but the hold with its 10~m zone only @cal_hold10@ (mean saturated green @cal_hold10_green@~s): vehicles leaving a queue now spread to gaps of about 20~m, so a 10~m zone empties between them and the green gaps out too early. The zone is thus a kinematics-dependent parameter, as the passage time of a real actuated controller is set on site. Re-tuned on the tuning seed to @zone@~m, the hold reached @zone_hold@ and actuated control @zone_act@, against @zone_web@ for Webster.
 
 \subsection{Experiment 8: Imperfect Sensing}
-All results so far assume that the controller knows every vehicle's position, speed and class. To measure how much this matters, the vehicle-reading controllers were run behind a sensor model that reports only what a camera would: vehicles within 60~m of the stop line, refreshed at 2~Hz, without classes (as a single cascade), with each vehicle detected independently with a given recall, and optionally with phantom detections at fixed spots, like the cascade's static false positives. The last profile uses the measured pipeline of Experiment 6. Emergency preemption still reads the true emergency flags; ten paired seeds per cell. Tables~\ref{tab:sensing-med} and~\ref{tab:sensing-cap} give the results at medium demand and at 0.9 times capacity. @sense_text@Closing the loop with the present detector would therefore harm traffic; a detector must at least suppress static false positives near the stop line, and its recall matters most near capacity.
+To measure the cost of the exact-state assumption, the vehicle-reading controllers ran behind a sensor model that reports only what a camera would: vehicles within 60~m, refreshed at 2~Hz, without classes, each detected with a given recall, optionally with phantom detections at fixed spots like the cascade's static false positives, and finally the measured pipeline of Experiment 6; preemption reads true flags. Table~\ref{tab:sensing} gives delay at medium demand and 0.9 times capacity (medium / 0.9$\times$). @sense_text@Closing the loop with the present detector would harm traffic; a detector must at least suppress static false positives near the stop line, and its recall matters most near capacity.
 
-@TBL_sn1@
-@TBL_sn2@
+@TBL_sn@
 
 \subsection{Experiment 9: Calibration of the Density Weights}
 \label{sec:calib}
-The class weights and multipliers of Eq.~\eqref{eq:density} were set by hand. To calibrate them from data, a random search over the score parameters of the discharge-hold controller (four class weights and the emergency-vehicle weight, log-uniform 0.25--4 and 1--10; the queued/moving ratio, 1--12; and $\theta$, 1.0--1.6; the car weight stays 1 because rule~\eqref{eq:green} compares ratios) evaluated @cb_cand@ candidates on tuning seeds @cb_t0@--@cb_t1@ at medium demand, high demand and 0.9 times capacity, minimizing delay relative to the hand-set weights. The best candidate (motorcycle @cb_m@, auto-rickshaw @cb_a@, bus @cb_b@, truck @cb_t@, emergency @cb_e@, queued/moving ratio @cb_q@, $\theta$ = @cb_th@), the hand-set weights and a plain vehicle count were then compared on the held-out seeds 1--10 (Table~\ref{tab:calibration}). @calib_text@The plain count remained clearly worse, confirming the ablation. The calibrated parameters are fitted to this simulator's traffic and must be re-fitted against field data before deployment; the search is a simple, reproducible way to do so, not a learned controller.
-
-@TBL_cb@
+The hand-set weights were calibrated by random search over the class weights (0.25--4; emergency 1--10), the queued/moving ratio (1--12) and $\theta$ (1.0--1.6) of the hold controller, evaluating @cb_cand@ candidates on tuning seeds @cb_t0@--@cb_t1@ at medium demand, high demand and 0.9 times capacity (the car weight stays 1, since Eq.~\eqref{eq:green} compares ratios). The best candidate (motorcycle @cb_m@, auto-rickshaw @cb_a@, bus @cb_b@, truck @cb_t@, emergency @cb_e@, queued/moving ratio @cb_q@, $\theta$ = @cb_th@) was compared with the hand-set weights and a plain count on held-out seeds 1--10. @calib_text@The plain count remained clearly worse, confirming the ablation. The parameters are fitted to this simulator and must be re-fitted on field data before deployment; the search is a reproducible procedure, not a learned controller.
 
 \section{Discussion}
-Two results qualify the usual claim that density-based control beats fixed timing. Below capacity, the gain over an untuned 20~s plan is real but not specific to density scoring: a Webster plan tuned to the demand, actuated control and max-pressure control achieve the same. Near capacity, density-only switching is worse than fixed timing, because it ends greens while the served queue is still discharging. With the discharge hold, the proposed controller matches the best strategies below capacity and comes close to the highest capacity measured (the Webster plan's, @cap_web@), while keeping the properties that motivated it: its decisions follow a rule that can be stated in one line, its red time is bounded in closed form, and its safety is audited at every step. Its results are, however, almost identical to plain actuated control, which uses no density score at all: in this setting the gap-out test, not the score, does most of the work. The score's remaining role is to decide when a cleared green should hand over, where the ablation shows that the queued/moving distinction matters. Emergency priority and adaptive control interact: resuming after preemption with the higher-scoring direction, rather than always the held one, is a direct improvement to test.
+Two results qualify the usual claim that density-based control beats fixed timing. Below capacity, the gain over an untuned 20~s plan is not specific to density scoring: a Webster plan, actuated control and max-pressure control achieve the same. Near capacity, density-only switching is worse than fixed timing, because it ends greens while the served queue is still discharging. With the discharge hold, the controller matches the best strategies below capacity and comes close to the highest capacity measured (Webster's, @cap_web@), while its rule fits in one line, its red time is bounded and its safety is audited at every step. Its results are, however, almost identical to plain actuated control, which uses no density score: the gap-out test, not the score, does most of the work, and the score's remaining role is to decide when a cleared green hands over. Resuming after preemption with the higher-scoring direction is a direct improvement to test.
 
-The research questions of Section~\ref{sec:contrib} are answered as follows: variable greens keep safe change intervals (no violation in @runs@ runs); preemption serves emergency vehicles without delay but costs other traffic more under adaptive control than under fixed timing; near and above capacity the original rule fails and the hold corrects it; and a large part of the gain below capacity comes from replacing an untuned plan, not from the density score.
+The research questions of Section~\ref{sec:contrib} are answered as follows: variable greens keep safe change intervals (no violation in @runs@ runs); preemption serves emergency vehicles without delay but costs other traffic more under adaptive control than under fixed timing; near and above capacity the original rule fails and the hold corrects it; and much of the gain below capacity comes from replacing an untuned plan, not from the density score.
 
 \section{Comparison with Existing Work}
-Table~\ref{tab:comparison} compares the proposed controller with re-implementations of the strategies used by existing work, which share its phase sequence, change intervals and green limits. The original papers could not be compared directly, since they use different simulators, demands and metrics.
+Table~\ref{tab:comparison} compares the proposed controller with re-implementations of the strategies of existing work, which share its phase sequence, change intervals and green limits. The original papers could not be compared directly, since they use different simulators, demands and metrics.
 
 @TBL_cmp@
 
 \section{Limitations}
 \begin{itemize}
-  \item \textbf{Simulation only.} The model has no turning movements, lane changes, pedestrians or driver variability and has not been calibrated against field data, so absolute delays are not field predictions.
-  \item \textbf{Kinematics.} The model behind the main results has no driver reaction time, so its queues discharge much faster than real ones. A reaction time of 1.6~s matches the field saturation headway, but the calibrated model still lacks start-up delay, so its start-up lost time is too low; with real start-up lost time, short greens would cost more, so the original rule's capacity loss is if anything understated. The gap-out zone of the discharge hold must also suit the local vehicle spacing: 10~m for the default model, @zone@~m for the calibrated one.
-  \item \textbf{Arrival model.} Arrivals follow deterministic headways at a rate redrawn every 15~s, not a Poisson process, and emergency vehicles are far more frequent than in real traffic.
-  \item \textbf{Comparison controllers.} The baselines are re-implementations of the published strategies with ideal sensing, not the original systems; the Webster plan is given the true mean demand of each run.
-  \item \textbf{Sensing.} The main results use exact vehicle states, and emergency vehicles are detected perfectly. The controllers need a detector far better than the present Haar pipeline, in particular one without static false positives near the stop line. The vision pipeline was tested only on synthetic frames; real footage with lighting changes, occlusion and weather is harder.
-  \item \textbf{Parameters and hardware.} The calibrated score parameters are fitted to this simulator, not to field data; the congestion thresholds used for display were set by hand. A planned Raspberry Pi 4 deployment, with one camera per approach and relay-driven signal heads, is estimated at roughly INR 6,000--8,000 in components, and its detection time at 5--10 times slower than the laptop; these are estimates and must be verified on actual hardware.
+  \item \textbf{Simulation only:} no turning movements, lane changes, pedestrians or driver variability, and no calibration against field data, so absolute delays are not field predictions.
+  \item \textbf{Kinematics:} the main model has no reaction time, so queues discharge too fast; the calibrated model matches the saturation headway but lacks start-up delay, so real short greens would cost more and the original rule's capacity loss is if anything understated. The hold's zone must suit local spacing (10~m for the default model, @zone@~m for the calibrated one).
+  \item \textbf{Arrivals and baselines:} arrivals are deterministic headways at a redrawn rate, not Poisson, and emergency vehicles are far more frequent than in reality; the baselines are re-implementations with ideal sensing, and Webster knows the true demand.
+  \item \textbf{Sensing and hardware:} control uses exact states and perfect emergency detection; the vision pipeline was tested only on synthetic frames and is too weak to drive control. A Raspberry Pi 4 deployment (roughly INR 6,000--8,000 in components, detection estimated 5--10 times slower than the laptop) is an estimate to be verified on actual hardware.
 \end{itemize}
 """
 
@@ -1420,7 +1376,7 @@ APP_A = r"""%% appendices/AppendixA_UNAI_Certificate.tex
 Sustainable Development Goals}}
 \end{center}
 
-\vspace{0.3cm}
+\vspace{0.1cm}
 
 This is to certify that the project titled \textbf{\reporttitle} submitted by
 the following final year students of the Bachelor of Technology in Information Technology at Ajay Kumar Garg Engineering College, Ghaziabad
@@ -1428,47 +1384,48 @@ has been reviewed and found to be in alignment with the UN Sustainable
 Development Goals (SDGs) listed below. All efforts have been made to ensure
 no other SDGs are compromised or negatively impacted.
 
-\vspace{0.4cm}
+\vspace{0.1cm}
 
 % Replace \square with \checkmark for SDGs your project aligns with.
+\footnotesize
 \begin{multicols}{2}
 \noindent
 \begin{tabbing}
-\hspace{0.6cm}\=\hspace{4.2cm}\=\kill
-\textbf{No. }\> \textbf{SDG Name}\>\textbf{$\surd$}\\[3pt]
-1  \> No Poverty                     \> $\square$ \\[2pt]
-2  \> Zero Hunger                    \> $\square$ \\[2pt]
-3  \> Good Health \& Well-being      \> $\checkmark$ \\[2pt]
-4  \> Quality Education              \> $\square$ \\[2pt]
-5  \> Gender Equality                \> $\square$ \\[2pt]
-6  \> Clean Water and Sanitation     \> $\square$ \\[2pt]
-7  \> Affordable and Clean Energy    \> $\square$ \\[2pt]
-8  \> Decent Work \& Economic Growth \> $\square$ \\[2pt]
-9  \> Industry, Innovation \& Infra. \> $\checkmark$ \\[2pt]
+\hspace{0.7cm}\=\hspace{5.4cm}\=\kill
+\textbf{No. }\> \textbf{SDG Name}\>\textbf{$\surd$}\\[1pt]
+1  \> No Poverty                     \> $\square$ \\[0pt]
+2  \> Zero Hunger                    \> $\square$ \\[0pt]
+3  \> Good Health \& Well-being      \> $\checkmark$ \\[0pt]
+4  \> Quality Education              \> $\square$ \\[0pt]
+5  \> Gender Equality                \> $\square$ \\[0pt]
+6  \> Clean Water and Sanitation     \> $\square$ \\[0pt]
+7  \> Affordable and Clean Energy    \> $\square$ \\[0pt]
+8  \> Decent Work \& Economic Growth \> $\square$ \\[0pt]
+9  \> Industry, Innovation \& Infra. \> $\checkmark$ \\[0pt]
 \end{tabbing}
 
 \columnbreak
 
 \noindent
 \begin{tabbing}
-\hspace{0.6cm}\=\hspace{4.2cm}\=\kill
-\textbf{No.}\>\textbf{SDG Name}\>\textbf{$\surd$}\\[3pt]
-10 \> Reduced Inequalities           \> $\square$ \\[2pt]
-11 \> Sustainable Cities \& Comm.    \> $\checkmark$ \\[2pt]
-12 \> Responsible Consumption        \> $\square$ \\[2pt]
-13 \> Climate Action                 \> $\checkmark$ \\[2pt]
-14 \> Life Below Water               \> $\square$ \\[2pt]
-15 \> Life on Land                   \> $\square$ \\[2pt]
-16 \> Peace, Justice \& Institutions \> $\square$ \\[2pt]
-17 \> Partnerships for the Goals     \> $\square$ \\[2pt]
+\hspace{0.7cm}\=\hspace{5.4cm}\=\kill
+\textbf{No.}\>\textbf{SDG Name}\>\textbf{$\surd$}\\[1pt]
+10 \> Reduced Inequalities           \> $\square$ \\[0pt]
+11 \> Sustainable Cities \& Comm.    \> $\checkmark$ \\[0pt]
+12 \> Responsible Consumption        \> $\square$ \\[0pt]
+13 \> Climate Action                 \> $\checkmark$ \\[0pt]
+14 \> Life Below Water               \> $\square$ \\[0pt]
+15 \> Life on Land                   \> $\square$ \\[0pt]
+16 \> Peace, Justice \& Institutions \> $\square$ \\[0pt]
+17 \> Partnerships for the Goals     \> $\square$ \\[0pt]
 \end{tabbing}
 \end{multicols}
 
-\vspace{0.5cm}
+\vspace{0.2cm}
 
 \noindent
 \begin{tabular}{@{}p{7.5cm}p{6cm}@{}}
-\textbf{Signatures of Students} & \textbf{Signature of Supervisor} \\[0.5cm]
+\textbf{Signatures of Students} & \textbf{Signature of Supervisor} \\[0.3cm]
 @APPSIG@
 Date: \submissiondate & Date: \submissiondate \\
 \end{tabular}
@@ -1485,6 +1442,7 @@ def src(path, kind, name, cls=None):
             if node.col_offset:
                 first, *rest = seg.split("\n")
                 seg = "\n".join([first] + [l[node.col_offset:] if l.strip() else l for l in rest])
+            seg = re.sub(r'\n[ \t]*"""[\s\S]*?"""[ \t]*(?=\n)', "", seg, count=1)  # listing shows code, not the docstring
             return re.sub(r"[^\x00-\x7f]", "-", seg)
     raise KeyError(name)
 
@@ -1504,128 +1462,20 @@ APP_B = "\n".join([
     r"\textbf{Description:} The green-end decision of Eqs.~\eqref{eq:green} and~\eqref{eq:hold}. A green never ends before the minimum or runs past the maximum; between them it may end only when the served direction no longer out-scores the waiting one by the threshold and, with the hold, has gapped out.", "",
     listing("[Module 2] Green-end decision", "\n\n".join(src("decision_engine/adaptive_controller.py", ast.FunctionDef, n)
                                                        for n in ("_should_end_phase", "_green_ready_to_end", "_still_discharging"))),
-    r"\section{Module 3: Haar-Cascade Vehicle Detector (\texttt{vision/detector.py})}",
-    r"\textbf{Description:} The detector applied to each virtual camera frame; it localizes vehicles but does not classify them.", "",
-    listing("[Module 3] Detector", src("vision/detector.py", ast.FunctionDef, "detect")),
-    r"\section{Module 4: Database Models (\texttt{database/models.py})}",
+    r"\section{Module 3: Database Models (\texttt{database/models.py})}",
     r"\textbf{Description:} The two-table snapshot split (a snapshot and one row per road) used by the analytics collector, as in Table~\ref{tab:schema}.", "",
-    listing("[Module 4] Snapshot tables", src("database/models.py", ast.ClassDef, "Snapshot") + "\n\n" + src("database/models.py", ast.ClassDef, "RoadSnapshot")),
+    listing("[Module 3] Snapshot tables", src("database/models.py", ast.ClassDef, "Snapshot") + "\n\n" + src("database/models.py", ast.ClassDef, "RoadSnapshot")),
     r"\vspace{0.5cm}", r"\noindent\textbf{Full Source Code Repository:}",
     r"\url{https://github.com/shivam-G05/Smart-Traffic-Management}", ""])
-
-CV_TEMPLATE = r"""
-%% ================================================================
-%%  STUDENT @IDX@  (one full page)
-%% ================================================================
-\newpage
-\thispagestyle{fancy}
-
-\begin{center}
-  {\Large\textbf{Curriculum Vitae}}
-\end{center}
-
-\vspace{0.3cm}
-
-\noindent
-\begin{minipage}[t]{0.72\textwidth}
-  \begin{tabular}{@{}p{3.5cm}p{7cm}}
-    \textbf{Full Name}      & @NAME@ \\[4pt]
-    \textbf{Roll No.}       & XXXXXXXXXX \\[4pt]
-    \textbf{Branch}         & Information Technology \\[4pt]
-    \textbf{Batch}          & 2023 -- 2027 \\[4pt]
-    \textbf{Date of Birth}  & DD Month YYYY \\[4pt]
-    \textbf{Email}          & student@akgec.ac.in \\[4pt]
-    \textbf{Mobile}         & +91-XXXXXXXXXX \\[4pt]
-    \textbf{LinkedIn}       & linkedin.com/in/your-profile \\[4pt]
-    \textbf{GitHub}         & github.com/your-username \\
-  \end{tabular}
-\end{minipage}
-\hfill
-\begin{minipage}[t]{0.24\textwidth}
-  \centering
-  \setlength{\fboxsep}{0pt}
-  \fbox{\rule{3.5cm}{0pt}\rule{0pt}{4.5cm}}\\[2pt]
-  {\small Passport Size Photo}
-\end{minipage}
-
-\vspace{0.5cm}\hrule\vspace{0.4cm}
-
-\noindent\textbf{Educational Qualifications}
-\vspace{0.2cm}
-
-\begin{tabular}{@{}p{2.5cm}p{5cm}p{3cm}p{1.5cm}@{}}
-\toprule
-\textbf{Degree} & \textbf{Institution} & \textbf{Board/University} & \textbf{Year} \\
-\midrule
-B.Tech (IT)    & AKGEC, Ghaziabad       & AKTU Lucknow & 2027 \\
-Class XII       & School Name            & Board Name   & 2023 \\
-Class X         & School Name            & Board Name   & 2021 \\
-\bottomrule
-\end{tabular}
-
-\vspace{0.4cm}\hrule\vspace{0.4cm}
-
-\noindent\textbf{Technical Skills}
-\vspace{0.2cm}
-
-\begin{tabular}{@{}p{3.5cm}p{9cm}@{}}
-\textbf{Languages}   & [to be filled by the student] \\[3pt]
-\textbf{Web / UI}    & [to be filled by the student] \\[3pt]
-\textbf{Databases}   & [to be filled by the student] \\[3pt]
-\textbf{Tools}       & [to be filled by the student] \\[3pt]
-\textbf{Others}      & [to be filled by the student] \\
-\end{tabular}
-
-\vspace{0.4cm}\hrule\vspace{0.4cm}
-
-\noindent\textbf{Projects}
-\vspace{0.2cm}
-
-\noindent\textbf{1. \reporttitle} \hfill \textit{2023--2027}\\
-Final year project: a simulation-first smart traffic management system with a density-aware adaptive signal controller, emergency-vehicle preemption, a vision pipeline and a live dashboard.
-
-\noindent\textbf{2. [Project Title]} \hfill \textit{[Month Year]}\\
-[Brief one-line description of another project.]
-
-\vspace{0.4cm}\hrule\vspace{0.4cm}
-
-\noindent\textbf{Internships / Work Experience}
-\vspace{0.2cm}
-
-\noindent\textbf{[Company / Organisation Name]} \hfill \textit{[Month Year -- Month Year]}\\
-Role: [Intern / Role Title]\\
-[Brief description of work done.]
-
-\vspace{0.4cm}\hrule\vspace{0.4cm}
-
-\noindent\textbf{Certifications and Achievements}
-\begin{itemize}\setlength\itemsep{1pt}
-  \item [Certification Name -- Issuing Body (Year)]
-  \item [Achievement / Award (Year)]
-\end{itemize}
-
-\vspace{0.4cm}\hrule\vspace{0.4cm}
-
-\noindent\textbf{Declaration}\\[3pt]
-I hereby declare that all information furnished above is true to the best of
-my knowledge.
-
-\vspace{0.6cm}
-\noindent Date: \submissiondate \hfill Signature: \underline{\hspace{4cm}}
-"""
-
-APP_C = ("%% appendices/AppendixC_CV.tex\n%% Student CVs --- one student per page\n"
-         "\\chapter{Student Curriculum Vitae}\n\\label{app:cv}\n" +
-         "".join(CV_TEMPLATE.replace("@IDX@", str(i + 1)).replace("@NAME@", s) for i, s in enumerate(STUDENTS)) + "\n")
 
 # --------------------------------------------------------------------------- write
 
 figs = {
-    "FIG_ARCH": figure("fig1_architecture.png", "0.75", "Software architecture. Solid boxes form the control loop; dashed boxes form the vision pipeline, whose output is displayed and evaluated but not used for control in this study.", "fig:architecture"),
-    "FIG_WORKFLOW": figure("fig2_workflow.png", "0.62", "Method workflow. (a) The per-step control pipeline. (b) The green-end decision; the test marked ``discharge hold'' is the extension added to the original controller.", "fig:workflow"),
-    "FIG_PREEMPT": figure("fig3_preemption.png", "0.85", "Emergency preemption states. Every path from one direction's green to the other's passes through a full yellow and all-red interval.", "fig:preemption"),
-    "FIG_ABOVE": figure("fig5_above_capacity.png", "0.7", "Delay (top, log scale) and throughput (bottom) against demand, preemption off. The dotted line marks the fixed-time capacity.", "fig:above"),
-    "FIG_PEAK": figure("fig6_peak_queue.png", "0.85", "Queue including vehicles waiting to enter during a 60-minute peak period (mean of ten seeds, 2-minute moving average, preemption off). Shading: demand ramping (light) and at 1.2 times the fixed-time capacity (dark).", "fig:peak"),
+    "FIG_ARCH": figure("fig1_architecture.png", "0.6", "Software architecture. Solid boxes form the control loop; dashed boxes form the vision pipeline, whose output is displayed and evaluated but not used for control in this study.", "fig:architecture"),
+    "FIG_WORKFLOW": figure("fig2_workflow.png", "0.5", "Method workflow. (a) The per-step control pipeline. (b) The green-end decision; the test marked ``discharge hold'' is the extension added to the original controller.", "fig:workflow"),
+    "FIG_PREEMPT": figure("fig3_preemption.png", "0.75", "Emergency preemption states. Every path from one direction's green to the other's passes through a full yellow and all-red interval.", "fig:preemption"),
+    "FIG_ABOVE": figure("fig5_above_capacity.png", "0.55", "Delay (top, log scale) and throughput (bottom) against demand, preemption off. The dotted line marks the fixed-time capacity.", "fig:above"),
+    "FIG_PEAK": figure("fig6_peak_queue.png", "0.75", "Queue including vehicles waiting to enter during a 60-minute peak period (mean of ten seeds, 2-minute moving average, preemption off). Shading: demand ramping (light) and at 1.2 times the fixed-time capacity (dark).", "fig:peak"),
 }
 vals.update(figs)
 
@@ -1633,7 +1483,7 @@ sig_rows = "\n".join(f"    {s} (Roll No.) & \\underline{{\\hspace{{4cm}}}} \\\\[
 cert_students = " \\quad\n".join(f"{s} (Roll No.)" for s in STUDENTS)
 ack_students = " \\\\\n".join(STUDENTS)
 right = ["", "\\textbf{\\mentor}", "\\dept", "\\college"]
-app_sig = "".join(st + " \\dotfill & " + right[i] + " \\\\[0.4cm]\n" for i, st in enumerate(STUDENTS))
+app_sig = "".join(st + " \\dotfill & " + right[i] + " \\\\[0.15cm]\n" for i, st in enumerate(STUDENTS))
 
 files = {
     "main.tex": MAIN.replace("@TITLE@", TITLE).replace("@STUDENTS@", stud_lines).replace("@MENTOR@", MENTOR),
@@ -1652,7 +1502,6 @@ files = {
     "References.bib": BIB,
     "appendices/AppendixA_UNAI_Certificate.tex": APP_A.replace("@APPSIG@", app_sig),
     "appendices/AppendixB_Code.tex": APP_B,
-    "appendices/AppendixC_CV.tex": APP_C,
 }
 
 if OUT.exists():

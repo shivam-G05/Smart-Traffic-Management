@@ -1,0 +1,10 @@
+{
+  "cpu": "12th Gen Intel(R) Core(TM) i5-12450H",
+  "python": "3.12.9",
+  "frames": 400,
+  "detect_ms_mean": 171.26112225072575,
+  "detect_ms_median": 177.7149000117788,
+  "detect_ms_p95": 208.85210001142696,
+  "decision_ms_mean": 0.004319315000611823,
+  "decisions": 20000
+}
